@@ -778,12 +778,13 @@ if(IsEmpty)return -99;
 
   // Crea i grafici solo se ci sono almeno due valori non nulli
   //if (nonZeroNentr > 1) {
-  eG  = new TGraphErrors();
+  eG  = new TGraphErrors();   
   eGX = new TGraphErrors();
   eGY = new TGraphErrors();  
+  
  
-  //int t = 1315; //per simulazioni (60 emulsioni russe per brick)
-  int t = 1350; //per dati (57 emulsioni di Nagoya per brick)      
+  int t = 1315; //per simulazioni (60 emulsioni russe per brick)
+  //int t = 1350; //per dati (57 emulsioni di Nagoya per brick)         
   int cont = 0;
   for(int i=0;i<npl;i++)
     {
@@ -858,7 +859,7 @@ if(cont==1)return -98;
   TGraphErrors* eG_short = nullptr;  // lo definiamo fuori dal blocco if per usarlo dopo
   
   if (tr.ID() == 957) {
-    std::cout << "[INFO] Fit speciale: solo primi 10 punti per traccia ID 957\n";
+    //std::cout << "[INFO] Fit speciale: solo primi 10 punti per traccia ID 957\n";
   
     // Crea una copia del grafico con massimo 10 punti
     eG_short = new TGraphErrors();
@@ -894,27 +895,12 @@ if(cont==1)return -98;
   
   int status = eGResult;                                                             //...fino a qua, per limitare il fit ai soli primi 10 punti per la traccia 957
 
-  /*if (tr.ID() == 4425) {
-    std::ofstream logfile("fit_4425.log", std::ios::app);  // append per non sovrascrivere
-    if (logfile.is_open()) {
-      logfile << ">>> FIT TRACK ID 4425 <<<\n";
-      logfile << "Fit status: " << status << "\n";
-      logfile << "Parameter 0 (1/P^2): " << eF1->GetParameter(0) << "\n";
-      logfile << "Parameter 1 (sigma): " << eF1->GetParameter(1) << "\n";
-      logfile.close();
-    } else {
-      std::cerr << "Errore nell'apertura del file di log.\n";
-    }
-  }*/
  
   if (eGResult->IsValid()){
-  /*if (status==0) {*/
-    /*std::cout << "Valid Fit" << std::endl;*/
     eP  = 1./sqrt(eF1->GetParameter(0));
-    printf("\n TrackEvt = %d TrackID = %d, eP originario = %.5f\n", eP, trackEvt, tr.ID());
+    //printf("\n TrackEvt = %d TrackID = %d, eP originario = %.5f\n", eP, trackEvt, tr.ID());
   } else {
-    /*std::cout << "Divergent Fit" << std::endl;*/
-    std::cout << "[WARN] Fit NON valido per traccia ID: " << tr.ID() << std::endl;  
+    //std::cout << "[WARN] Fit NON valido per traccia ID: " << tr.ID() << std::endl;  
     eP = -10;
      /*
     // Salvataggio grafico eG in caso di fit divergente
@@ -1144,7 +1130,7 @@ for (int i = 1; i < nPoints; ++i) {
     }
 }
 
-printf("Pt su eG_crescente (prima di iter.): %d\n", pt_count);  //A QUA
+//printf("Pt su eG_crescente (prima di iter.): %d\n", pt_count);  //A QUA
 
 
 /*lasciare commentato
@@ -1229,10 +1215,10 @@ auto rimuovi_outlier_finali = [&](TGraphErrors* graph, TF1* fitFunc, const doubl
         double y_fit = fitFunc->Eval(x);
         double residuo = y - y_fit;
 
-        std::cout << "Punto " << idx << ": x = " << x << ", y = " << y << ", y_fit = " << y_fit << ", residuo = " << residuo << "\n";
+        //std::cout << "Punto " << idx << ": x = " << x << ", y = " << y << ", y_fit = " << y_fit << ", residuo = " << residuo << "\n";
 
         if (std::abs(residuo) > threshold) {
-            std::cout << "[INFO] Punto " << idx << " ha residuo > " << threshold << " e sarà rimosso.\n";
+            //std::cout << "[INFO] Punto " << idx << " ha residuo > " << threshold << " e sarà rimosso.\n";
             graph->RemovePoint(idx);
             puntiRimossi = true;
             idx--;
@@ -1261,7 +1247,7 @@ if (eG_crescente->GetN() > 2) {
 
         bool primoRefitRiuscito = false;
 
-        std::cout << "[INFO] Inizio prima iterazione rimozione outlier...\n";
+        //std::cout << "[INFO] Inizio prima iterazione rimozione outlier...\n";
         bool rimossi_1 = rimuovi_outlier_finali(eG_crescente, eF1, residuoThreshold);
 
         bool skipSecondIteration = false;
@@ -1272,17 +1258,17 @@ if (eG_crescente->GetN() > 2) {
                 refitResult = eG_crescente->Fit(eF1, fitopt);
                 if (refitResult->IsValid()) {
                     eP = 1. / sqrt(eF1->GetParameter(0));
-                    std::cout << "[INFO] Primo refit riuscito.\n";
+                    //std::cout << "[INFO] Primo refit riuscito.\n";
                     primoRefitRiuscito = true;
                     // Salva stato dopo la prima iterazione:
                     eG_crescente_post1 = (TGraphErrors*)eG_crescente->Clone("eG_crescente_post1");
                 } else {
-                    std::cerr << "[WARN] Primo refit fallito.\n";
+                    //std::cerr << "[WARN] Primo refit fallito.\n";
                     skipSecondIteration = true;
                 }
             } else {
-                std::cerr << "[WARN] Troppi pochi punti (" << remainingPoints << ") dopo prima rimozione. Refitting saltato.\n";
-                std::cout << "[INFO] Seconda iterazione saltata per numero insufficiente di punti.\n";
+                //std::cerr << "[WARN] Troppi pochi punti (" << remainingPoints << ") dopo prima rimozione. Refitting saltato.\n";
+                //std::cout << "[INFO] Seconda iterazione saltata per numero insufficiente di punti.\n";
                 skipSecondIteration = true;
             }
         } else { 
@@ -1290,7 +1276,7 @@ if (eG_crescente->GetN() > 2) {
         }
 
         if (!skipSecondIteration) {
-            std::cout << "[INFO] Inizio seconda iterazione rimozione outlier...\n";
+            //std::cout << "[INFO] Inizio seconda iterazione rimozione outlier...\n";
             bool rimossi_2 = rimuovi_outlier_finali(eG_crescente, eF1, residuoThreshold);
 
             if (rimossi_2) {
@@ -1299,15 +1285,15 @@ if (eG_crescente->GetN() > 2) {
                     refitResult = eG_crescente->Fit(eF1, fitopt);
                     if (refitResult->IsValid()) {
                         eP = 1. / sqrt(eF1->GetParameter(0));
-                        std::cout << "[INFO] Secondo refit riuscito.\n";
+                        //std::cout << "[INFO] Secondo refit riuscito.\n";
 
                         // Salva stato dopo la seconda iterazione:
                         eG_crescente_post2 = (TGraphErrors*)eG_crescente->Clone("eG_crescente_post2");
                     } else {
-                        std::cerr << "[WARN] Secondo refit fallito.\n";
+                        //std::cerr << "[WARN] Secondo refit fallito.\n";
                     }
                 } else {
-                    std::cerr << "[WARN] Troppi pochi punti (" << remainingPoints << ") dopo seconda rimozione. Refitting saltato.\n";
+                    //std::cerr << "[WARN] Troppi pochi punti (" << remainingPoints << ") dopo seconda rimozione. Refitting saltato.\n";
                 }
             }
         }   //A QUA

@@ -70,7 +70,7 @@ class EdbMomentumEstimator : public EdbTrackFitter {
   float  PMScoordinate(EdbTrackP &tr); 
   //std::vector<float> PMScoordinate(EdbTrackP &tr);  
   //TVector2 PMScoordinate(EdbTrackP *tr);
-  float   CellWeight(int npl, int m);
+  float   CellWeight(int npl, int m);  
   void    EstimateMomentumError(float P, int npl, float ang, float &pmin, float &pmax);
   double  Mat(float P, int npl, float ang);
   TF1    *MCSErrorFunction(const char *name, float x0, float dtx);
