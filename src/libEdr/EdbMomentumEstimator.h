@@ -12,6 +12,7 @@
 #include "TCanvas.h"
 #include "TF1.h"
 
+
 class TGraphErrors;
 class TString;
 class TGraphAsymmErrors;
@@ -66,7 +67,9 @@ class EdbMomentumEstimator : public EdbTrackFitter {
   float   PMS(EdbTrackP &tr);
   float   PMSang(EdbTrackP &tr);
   float   PMSang_corr(EdbTrackP &tr);
-  float   PMScoordinate(EdbTrackP &tr);
+  float  PMScoordinate(EdbTrackP &tr); 
+  //std::vector<float> PMScoordinate(EdbTrackP &tr);  
+  //TVector2 PMScoordinate(EdbTrackP *tr);
   float   CellWeight(int npl, int m);
   void    EstimateMomentumError(float P, int npl, float ang, float &pmin, float &pmax);
   double  Mat(float P, int npl, float ang);
