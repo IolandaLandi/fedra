@@ -27,6 +27,10 @@
 #include <TH1F.h>
 #include <TH2F.h>
 
+#include <tuple>   
+#include <vector>
+
+#include "TRandom3.h"
 
 
 
@@ -81,7 +85,7 @@ void EdbMomentumEstimator::Set0()
 void EdbMomentumEstimator::SetParPMS_Mag()
 {
   // set the default values for parameters used in PMS_Mag
-  eX0 = 3521;       //eX0 = 3504          
+  eX0 = 4676;       //eX0 = 3504         eX0 = 3521 micron per tung simul      eX0 =  4508 micron per tung+emul simul      eX0 = 4676 micron per tung+emul dati
 
   eDTsErrorFun.SetParameters(0.0021, 0.0054,0,0,0);
   eDTxErrorFun.SetParameters(0.0021, 0.0093,0,0,0);
@@ -637,7 +641,7 @@ float EdbMomentumEstimator::PMSang(EdbTrackP &tr)
   eF1->SetParLimits(1,0.0,100);
   eF1->SetParameter(0,5);                             // starting value for momentum in GeV
   eF1->SetParameter(1,10);                              // starting value for coordinate error  
-
+   
   const char *fitopt = "MQ"; //MQR
   eG ->Fit(eF1, fitopt);
   eGX->Fit(eF1X,fitopt);
@@ -653,8 +657,13 @@ float EdbMomentumEstimator::PMSang(EdbTrackP &tr)
 
 float EdbMomentumEstimator::PMScoordinate(EdbTrackP &tr)
 {
-  int trackEvt = tr.GetSegmentFirst()->MCEvt();
 
+  /*TRandom3 rng(12345); // inizializza generatore Mersenne Twister con seed fisso
+  float offset_sigma = 0.15; // sigma dello smearing in micron   */
+
+
+  int trackEvt = tr.GetSegmentFirst()->MCEvt();
+     
   int nseg = tr.N();
   int npl  = tr.Npl();  
   
@@ -662,7 +671,7 @@ float EdbMomentumEstimator::PMScoordinate(EdbTrackP &tr)
   //float xmean,ymean,zmean,txmean,tymean,wmean;
   float xmean0,ymean0,zmean0,txmean0,tymean0,wmean0;
   FitTrackLine(tr,xmean0,ymean0,zmean0,txmean0,tymean0,wmean0);    // calculate mean track parameters
-  float tmean=Sqrt(txmean0*txmean0+ tymean0*tymean0);
+  float tmean=sqrt(txmean0*txmean0+ tymean0*tymean0);
  
   float ang = 0.;
  
@@ -686,15 +695,19 @@ float EdbMomentumEstimator::PMScoordinate(EdbTrackP &tr)
   float dx1,dx2,dy1,dy2,DX1,DY1,DX2,DY2,appx,appy;
  
   TVectorF da(npl), dax(npl), day(npl);
-  TArrayI  nentr(npl);
+  TArrayI  nentr(npl);                  //arrey che tiene traccia di tutte le triplette)
+  TArrayI nentr_indep(npl);             //arrey che tiene traccia delle sole triplette indipendenti (da usare per errore su eG)
+
+  std::vector<std::pair<int, int>> used_ranges[npl];    //array (lungo npl) in cui ogni el è un vettore di intervalli di scattering (centerPID, endPID). Serve a tracciare le triplette indip già aggiunte per ciascuna cell length
   
  
-  for(int i=0;i<npl;i++)
+  for(int i=0;i<npl;i++)      
     {
       da[i]    = 0;
       dax[i]   = 0;
       day[i]   = 0;
       nentr[i] = 0;
+      nentr_indep[i] = 0;
     }
  
   EdbSegP *s1=0,*s2=0,*s3=0;
@@ -713,11 +726,31 @@ float EdbMomentumEstimator::PMScoordinate(EdbTrackP &tr)
           nr1 = TMath::Abs(s1->PID()-s2->PID());
           nr2 = TMath::Abs(s2->PID()-s3->PID());
           if(nr1!=nr2) continue;            // continue if (s1,s2) and (s2,s3) correspond to different cells
+
+
+
+          // Applica offset gaussiano a X e Y per simulare disallineamento
+          /*float x1 = s1->X() + rng.Gaus(0, offset_sigma);
+          float x2 = s2->X() + rng.Gaus(0, offset_sigma);
+          float x3 = s3->X() + rng.Gaus(0, offset_sigma);
+
+          float y1 = s1->Y() + rng.Gaus(0, offset_sigma);
+          float y2 = s2->Y() + rng.Gaus(0, offset_sigma);
+          float y3 = s3->Y() + rng.Gaus(0, offset_sigma);  */
+
+
  
           dx1 = s2->X()-s1->X();
           dx2 = s3->X()-s2->X();
           dy1 = s2->Y()-s1->Y();
-          dy2 = s3->Y()-s2->Y();
+          dy2 = s3->Y()-s2->Y();      
+
+          /*dx1 = x2 - x1;
+          dx2 = x3 - x2;
+          dy1 = y2 - y1;
+          dy2 = y3 - y2;  */  
+
+
           
           ang = 0; // ang is the rotation angle to get trasverse and longitudinal coordinates; not yet implemented 
           DX1 = cos(ang)*dx1+sin(ang)*dy1;
@@ -726,7 +759,7 @@ float EdbMomentumEstimator::PMScoordinate(EdbTrackP &tr)
           DX2 = cos(ang)*dx2+sin(ang)*dy2;
           DY2 = cos(ang)*dy2-sin(ang)*dx2;
  
-          appx = (  DX1 * ((s2->Z()-s3->Z())/(s1->Z()-s2->Z())) - DX2  ) * (  DX1 * ((s2->Z()-s3->Z())/(s1->Z()-s2->Z())) - DX2  );
+          appx = (  DX1 * ((s2->Z()-s3->Z())/(s1->Z()-s2->Z())) - DX2  ) * (  DX1 * ((s2->Z()-s3->Z())/(s1->Z()-s2->Z())) - DX2  );  
           appy = (  DY1 * ((s2->Z()-s3->Z())/(s1->Z()-s2->Z())) - DY2  ) * (  DY1 * ((s2->Z()-s3->Z())/(s1->Z()-s2->Z())) - DY2  );
  
  
@@ -735,12 +768,35 @@ float EdbMomentumEstimator::PMScoordinate(EdbTrackP &tr)
           //da[nr1] += (  (((s2->X()-s1->X())*(s2->Z()-s3->Z())/(s1->Z()-s2->Z()))-(s3->X()-s2->X()))**2 + (((y[j]-y[i])*(z[j]-z[k])/(z[i]-z[j]))-(y[k]-y[j]))**2 ) /2. ; 
           da[nr1] += (appx + appy)/2.; 
           nentr[nr1] += 1;
+
+
+          /*int pid2 = s2->PID();   
+          int pid3 = s3->PID();
+          int start_current = std::min(pid2, pid3);    //individio l'inizio dell'intervallo di scattering per la tripletta corrente (seg centrale)
+          int end_current = std::max(pid2, pid3);      //individio la fine dell'intervallo di scattering per la tripletta corrente (seg finale)
+
+
+          //Verifica se la tripletta corrente è indip (Scopo: Contare solo le triplette indip per ciascuna cell length (cioè per ciascun valore di nr1))
+          bool isIndependent = true;                    //variabile booleana che presuppone che la tripletta corrente (s1, s2, s3) sia indip
+          for (auto& range : used_ranges[nr1]) {   //itera su tutti gli intervalli di scattering (pid2, pid3) delle triplette già contate come indip per questo valore di cell length (nr1); used_ranges[nr1] è un vettore che contiene per ogni tripletta indip la coppia (pid2, pid3)
+            int start = range.first;                //estrae start=pid2 e end=pid3 di ciascuna tripletta indip già salvata per confrontarli con quelli della tripletta corrente
+            int end = range.second;
+            if (!(end_current <= start || start_current >= end)) {     //pid3 <= start || pid2 >= end è la condizione di NON sovrapposizione degli intervalli di scattering
+              isIndependent = false;                   //se c'è sovrapposizone il bool isIndependent viene messo a false
+              break;
+            }
+          }
+
+          if (isIndependent) {                  //se la tripletta corrente è indip allora viene registrata in used_ranges[nr1]    
+            used_ranges[nr1].emplace_back(start_current, end_current);     //emplace_back aggiunge la coppia (pid2, pid3) della tripletta corrente ala lista di intervalli di scattering per la cel length nr1
+            nentr_indep[nr1] += 1;             //incrementa il contatore delle triplette indip per quel valore di cell length
+          }*/
  
-      }//end cycle 3rd seg
+      }//end cycle 3rd seg (seg k)
  
-  }//end cycle 2nd seg
+  }//end cycle 2nd seg (seg j)
  
-    }//end cycle 1st seg
+    }//end cycle 1st seg (seg i)
   
   bool IsEmpty=true; 
   for(int i=0;i<npl;i++)
@@ -755,13 +811,13 @@ float EdbMomentumEstimator::PMScoordinate(EdbTrackP &tr)
     }
   
   SafeDelete(eF1);
-  SafeDelete(eF1X);
+  SafeDelete(eF1X);   
   SafeDelete(eF1Y);
   SafeDelete(eG);
   SafeDelete(eGX);
   SafeDelete(eGY);
  
-if(IsEmpty)return -99;
+if(IsEmpty)return -99;          
 
 
   // Verifica il numero di valori non nulli in nentr
@@ -776,33 +832,91 @@ if(IsEmpty)return -99;
 // Se ci sono esattamente 2 valori maggiori di 0, imposta eP, ePx, ePy a -98
  if (nonZeroNentr == 2) return -98;  */
 
+
+//DEBUG PER TRIPLETTE INDIPENDENTI
+/*printf("\n===== Verifica triplette per track ID %d =====\n", tr.ID());
+for (int i = 0; i < npl; ++i) {
+  if (nentr[i] > 0) {
+    printf("Cell length %2d -> Total: %3d, Independent: %3d\n", i, nentr[i], nentr_indep[i]);
+    
+    // Stampa delle triplette indipendenti
+    if (!used_ranges[i].empty()) {
+      printf("  Independent triplets (PID2, PID3):\n");
+      for (auto& range : used_ranges[i]) {
+        printf("    (%d, %d)\n", range.first, range.second);
+      }
+    }
+  }
+}*/
+
+
+
+
   // Crea i grafici solo se ci sono almeno due valori non nulli
   //if (nonZeroNentr > 1) {
   eG  = new TGraphErrors();   
   eGX = new TGraphErrors();
-  eGY = new TGraphErrors();  
+  eGY = new TGraphErrors();      
   
  
-  int t = 1315; //per simulazioni (60 emulsioni russe per brick)
-  //int t = 1350; //per dati (57 emulsioni di Nagoya per brick)         
+  //int t = 1315; //per simulazioni (60 emulsioni russe per brick)   
+  int t = 1350; //per dati (57 emulsioni di Nagoya per brick)                          
   int cont = 0;
-  for(int i=0;i<npl;i++)
+
+  bool firstPointInserted = false;   //bool per identificare il primo punto inserito in eG
+
+  for(int i=0;i<npl;i++)    
     {
-      if(nentr[i]>eMinEntr)  
+      if(nentr[i]>eMinEntr)     
     {
       // Stampa i valori prima di aggiungerli ai grafici
       //printf("Track ID %d - i = %d, z = %d, da = %.5f, dax = %.5f, day = %.5f, nentr = %d\n",
       //tr.ID(), i, i*t, da[i], dax[i], day[i], nentr[i]);
 
-      eGX->SetPoint(cont,i*t,dax[i]);
-      eGX->SetPointError(cont,0,dax[i]/Sqrt(nentr[i]));
+      eGX->SetPoint(cont,i*t,dax[i]);    
+      eGX->SetPointError(cont,0,dax[i]/sqrt(nentr[i]));
       eGY->SetPoint(cont,i*t,day[i]);
-      eGY->SetPointError(cont,0,day[i]/Sqrt(nentr[i]));
+      eGY->SetPointError(cont,0,day[i]/sqrt(nentr[i]));     
       eG->SetPoint(cont,i*t,da[i]);
-      eG->SetPointError(cont,0,da[i]/Sqrt(nentr[i]));
-      cont++;
+      eG->SetPointError(cont,0,da[i]/sqrt(nentr[i]));      //HO AGGIUNTO UN 2 SOTTO RADICE PER IL CALCOLO DELL'ERRORE!!!!!!  E ANCHE IL CONTATORE DELLE SOLE TRIPLETTE INDIP nentr_indep[i] AL POSTO DI nentr
+      cont++;  
+       
+        
     }
     }  
+
+   //Istruzioni per costruire la distribuzione dell'RMS del primo punto di eG
+      // Inserisci solo il primo valore di eG nell’istogramma ma solo per le tracce che hanno almeno due pt su eG
+    if (cont > 1 && !firstPointInserted) {
+      TH1F *h_Temp_da0 = new TH1F("h_da0", "Distribution of first RMS value; RMS[1];N_{tracks}", 2000, 0, 2); 
+      
+      double x0, y0;
+      eG->GetPoint(0, x0, y0);  // recupera il primo punto del grafico
+      h_Temp_da0->Fill(y0);
+
+      // <<< Qui stampi la info utile  
+      //std::cout << "Track ID " << tr.ID() << ": primo punto inserito in eG = da[0] = " << da[0] << std::endl;   
+
+      TFile *outFile = new TFile("RMS_punto0.root", "UPDATE");
+      if (outFile && outFile->IsOpen()) {
+        TH1F *hOld_da0 = (TH1F*)outFile->Get("h_da0");
+        if (hOld_da0) {
+          hOld_da0->Add(h_Temp_da0);
+        } else {
+          hOld_da0 = (TH1F*)h_Temp_da0->Clone("h_da0");
+        }
+
+        outFile->cd();
+        hOld_da0->Write("h_da0", TObject::kOverwrite);
+        delete hOld_da0;
+        outFile->Close();
+      } else {
+        std::cerr << "Errore nell'apertura del file ROOT per il salvataggio." << std::endl;
+      }
+
+      delete h_Temp_da0;
+      firstPointInserted = true;    
+    }
 
   /*std::cout << "[INFO] Differenze tra ordinate successive di eG (Δy = y_{i+1} - y_i):\n";
   for (int i = 0; i < eG->GetN() - 1; ++i) {
@@ -826,7 +940,7 @@ if(cont==1)return -98;
   eF1X->SetParLimits(1,0.0001,100);
   eF1X->SetParameter(0,5);                             // starting value for momentum in GeV
   eF1X->SetParameter(1,10);                              // starting value for coordinate error
-  
+    
   eF1Y = MCSCoordErrorFunction("eF1Y",tmean,eX0); 
   //eF1Y->SetRange(0,Min(57,maxY));
   eF1Y->SetParLimits(0,0.0001,100);
@@ -834,18 +948,18 @@ if(cont==1)return -98;
   eF1Y->SetParameter(0,5);                             // starting value for momentum in GeV
   eF1Y->SetParameter(1,10);                              // starting value for coordinate error
   
-  eF1 = MCSCoordErrorFunction("eF1",tmean,eX0);
+  eF1 = MCSCoordErrorFunction("eF1",tmean,eX0);   
   //eF1->SetRange(0,Min(57,max3D));
   eF1->SetParLimits(0,0.0,100);
-  //eF1->SetParLimits(1,0.0,100);                              //eF1->SetParLimits(1,0.0,100)
+  //eF1->SetParLimits(1,0.0,100);                              //eF1->SetParLimits(1,0.0,100)             
   eF1->SetParameter(0,5);                             // starting value for momentum in GeV
-  eF1->SetParameter(1,0.15);                              // starting value for coordinate error  eF1->SetParameter(1,10)
+  eF1->SetParameter(1, sqrt(6) * 0.15);                              // starting value for coordinate error  eF1->SetParameter(1,10)          eF1->SetParameter(1, sqrt(6) * 0.15);     
 
-  eF1->FixParameter(1, 0.15);   
+  eF1->FixParameter(1, sqrt(6) * 0.15);                                                   //HO AGGIUNTO SQRT(6) AL PARAMETRO DI RISOLUZIONE IN POSIZIONE!!!!!!!      eF1->FixParameter(1, sqrt(6) * 0.15);   
   //eF1->SetParameter(1,0.15);   
-  //eF1->SetParLimits(1,0.0,100);       //eF1->SetParLimits(1,0.0,0.4);   
+  //eF1->SetParLimits(1,0.0,100);       //eF1->SetParLimits(1,0.0,0.4);           
     
-  const char *fitopt = "MQS"; //MQR
+  const char *fitopt = "MQS"; //MQR    
   /*if (tr.ID()==4425) {   
     fitopt = "MS";
   }*/
@@ -876,7 +990,7 @@ if(cont==1)return -98;
     }
   
     eGResult = eG_short->Fit(eF1, fitopt);
-  } else {
+  } else {  
     eGResult = eG->Fit(eF1, fitopt);
   }
   
@@ -893,12 +1007,12 @@ if(cont==1)return -98;
     }
   }*/
   
-  int status = eGResult;                                                             //...fino a qua, per limitare il fit ai soli primi 10 punti per la traccia 957
+  int status = eGResult;                                                               //...fino a qua, per limitare il fit ai soli primi 10 punti per la traccia 957
 
  
   if (eGResult->IsValid()){
     eP  = 1./sqrt(eF1->GetParameter(0));
-    //printf("\n TrackEvt = %d TrackID = %d, eP originario = %.5f\n", eP, trackEvt, tr.ID());
+    //printf("\n TrackEvt = %d TrackID = %d, eP originario = %.5f\n", eP, trackEvt, tr.ID());  
   } else {
     //std::cout << "[WARN] Fit NON valido per traccia ID: " << tr.ID() << std::endl;  
     eP = -10;
@@ -953,9 +1067,9 @@ if (cont > 1 && eP < 1e9) {
 
 
   // Istogrammi temporanei
-  TH1F *hTempScarti = new TH1F("hTempScarti", "Distribution of Sum of Normalized Residuals;Sum; N_{tracks}", 2000, -1000, 1000);
   TH1F *hTempChi2   = new TH1F("hTempChi2", "Chi^{2} Distribution; Chi^{2}; N_{tracks}", 2000, 0, 2000);  
-  TH2F *hTemp_sumScarti_chi2 = new TH2F("hTemp_sumScarti_chi2", "Sum of Norm. Residuals vs Chi^{2}; Chi^{2}; Sum", 2000, 0, 2000, 2000, -1000, 1000);
+  TH2F *hTemp_sumScarti_chi2 = new TH2F("hTemp_sumScarti_chi2
+  TH1F *hTempScarti = new TH1F("hTempScarti", "Distribution of Sum of Normalized Residuals;Sum; N_{tracks}", 2000, -1000, 1000);", "Sum of Norm. Residuals vs Chi^{2}; Chi^{2}; Sum", 2000, 0, 2000, 2000, -1000, 1000);
 
   hTempScarti->Fill(sumScarti);
   hTempChi2->Fill(chi2);
@@ -1130,7 +1244,7 @@ for (int i = 1; i < nPoints; ++i) {
     }
 }
 
-//printf("Pt su eG_crescente (prima di iter.): %d\n", pt_count);  //A QUA
+//printf("Pt su eG_crescente (prima di iter.): %d\n", pt_count);  //A QUA      
 
 
 /*lasciare commentato
@@ -1204,7 +1318,7 @@ if (pt_count > 2) {
     }
 }*/
 
- //SCOMMENTARE DA QUA
+   //SCOMMENTARE DA QUA
 auto rimuovi_outlier_finali = [&](TGraphErrors* graph, TF1* fitFunc, const double threshold) -> bool {
     bool puntiRimossi = false;
     int idx = graph->GetN() - 1;
@@ -1296,7 +1410,7 @@ if (eG_crescente->GetN() > 2) {
                     //std::cerr << "[WARN] Troppi pochi punti (" << remainingPoints << ") dopo seconda rimozione. Refitting saltato.\n";
                 }
             }
-        }   //A QUA
+        }   //A QUA     
 
         /*   // Stampa residui finali
         std::cout << "Residui FINALI dopo due iterazioni per traccia " << trackEvt << ":\n";
@@ -1325,20 +1439,20 @@ if (eG_crescente->GetN() > 2) {
 
  //SCOMMENTARE DA QUA
 // Salvataggio file condizionato  
-   /* TFile *refitFile = new TFile("MCSgraphs_crescente_refit.root", "UPDATE");
+TFile *refitFile = new TFile("MCSgraphs_crescente_refit.root", "UPDATE");      
 if (refitFile && refitFile->IsOpen()) {
     if (eG_crescente_post2) {
-        std::cout << "[INFO] Salvando il grafico dopo la seconda iterazione.\n";
+        //std::cout << "[INFO] Salvando il grafico dopo la seconda iterazione.\n";
         eG_crescente_post2->SetName(Form("eG_crescente_post2_track%d", trackEvt));
         eG_crescente_post2->SetTitle(Form("Refit - Track Evt %d (TrackID %d) - Second Iteration", trackEvt, tr.ID()));
         eG_crescente_post2->Write();
     } else if (eG_crescente_post1) {
-        std::cout << "[INFO] Salvando il grafico dopo la prima iterazione.\n";
+        //std::cout << "[INFO] Salvando il grafico dopo la prima iterazione.\n";
         eG_crescente_post1->SetName(Form("eG_crescente_post1_track%d", trackEvt));
         eG_crescente_post1->SetTitle(Form("Refit - Track Evt %d (TrackID %d) - First Iteration", trackEvt, tr.ID()));
         eG_crescente_post1->Write();
     } else {
-        std::cout << "[INFO] Salvando il grafico crescente iniziale, senza iterazioni.\n";
+        //std::cout << "[INFO] Salvando il grafico crescente iniziale, senza iterazioni.\n";
         eG_crescente_iniziale->SetName(Form("eG_crescente_track%d", trackEvt));
         eG_crescente_iniziale->SetTitle(Form("Increasing Graph (Before Iter.) - Track Evt %d (TrackID %d)", trackEvt, tr.ID()));
         eG_crescente_iniziale->Write();
@@ -1346,7 +1460,7 @@ if (refitFile && refitFile->IsOpen()) {
     refitFile->Close();
 } else {
     std::cerr << "Errore apertura file per salvataggio refit.\n";
-}*/
+}           
    
 
     }}
@@ -1354,7 +1468,7 @@ if (refitFile && refitFile->IsOpen()) {
       delete eG_crescente_iniziale; // Libera memoria
       delete eG_crescente_post1;
       delete eG_crescente_post2;
-      delete eG_crescente;  //A QUA     
+      delete eG_crescente;  //A QUA    
 
       // Salva l'istogramma degli scarti negativi y_{i+1} - y_{i}   lasciare commentato
     /*  TFile *outFile1 = new TFile("DeltaY_DecreasingPoints.root", "UPDATE");
@@ -1378,7 +1492,7 @@ if (refitFile && refitFile->IsOpen()) {
   std::cerr << "Errore apertura file per salvataggio istogramma DeltaY.\n";
 }
 
-delete hTemp_DecreasingY;*/
+delete hTemp_DecreasingY;*/    
   
 
     
@@ -1408,33 +1522,33 @@ delete hTemp_DecreasingY;*/
 
  
   /*eP  = 1./sqrt(eF1->GetParameter(0));
-  ePx = 1./sqrt(eF1X->GetParameter(0));
+  ePx = 1./sqrt(eF1X->GetParameter(0));   
   ePy = 1./sqrt(eF1Y->GetParameter(0));*/
 
 
 
  // Creazione e salvataggio dei grafici su un file ROOT
-/*TFile *outFile = new TFile("MCSgraphs.root", "UPDATE"); //apre in modalità update
+TFile *outFile = new TFile("MCSgraphs.root", "UPDATE"); //apre in modalità update
 if (outFile && outFile->IsOpen()) {
   eG->SetName(Form("eG_track%d", tr.GetSegmentFirst()->MCEvt() ));   //eG->SetName(Form("eG_track%d", tr.ID()));  
   eG->SetTitle(Form("Track Evt %d (TrackID %d)", tr.GetSegmentFirst()->MCEvt(), tr.ID() ));   //eG->SetTitle(Form("eG_Track%d", tr.ID()));
 
   //eGX->SetName(Form("eGX_track%d", tr.ID()));
   // eGY->SetName(Form("eGY_track%d", tr.ID())); 
-  
+      
   eG->Write();
   //eGX->Write();
   //eGY->Write();
   
-  outFile->Close();*/
+  outFile->Close();  
   /*std::cout << "Grafici salvati su MCSgraphs.root" << std::endl;*/
-//} else {
+} else {      
   /*std::cerr << "Errore nell'apertura del file ROOT per il salvataggio." << std::endl;*/
-//}
+}  
+        
 
-
-return eP;
-}
+return eP;   
+}    
 
 //________________________________________________________________________________________
 float EdbMomentumEstimator::CellWeight(int npl, int m)
@@ -1466,12 +1580,12 @@ TF1 *EdbMomentumEstimator::MCSErrorFunction(const char *name, float x0, float dt
   // err(x) = sqrt(k*x*(1+0.038*log(x/x0))/p**2 + dtx)
 
   //  float k   = 14.64*14.64/x0;
-  // 14.64*14.64/1000/1000 = 0.0002143296  - we need p in GeV
+  // 14.64*14.64/1000/1000 = 0.0002143296  - we need p in GeV 
   // 13.6*13.6/1000/1000   = 0.0001849599  - we need p in GeV
 
 
   return new TF1(name,Form("sqrt(214.3296*x/%f*((1+0.038*log(x/(%f)))**2)/([0])**2+%e)",x0,x0,dtx));
-  // return new TF1(name,Form("sqrt(184.9599*x/%f*((1+0.038*log(x/(%f)))**2)/([0])**2+%e)",x0,x0,dtx));
+  // return new TF1(name,Form("sqrt(184.9599*x/%f*((1+0.038*log(x/(%f)))**2)/([0])**2+%e)",x0,x0,dtx));             
 
   //P is returned in MeV by this function for more convinience, but given in GeV as output.
 }
@@ -1483,10 +1597,10 @@ TF1 *EdbMomentumEstimator::MCSCoordErrorFunction(const char *name, float tmean,f
   //
   // use the Highland-Lynch-Dahl formula for theta_rms_plane = 13.6 MeV/bcp*z*sqrt(x/x0)  (PDG)
   // so the expected measured position deviation is (1/sqrt(3))*theta_rms_plane + measurement error
-  // log term in HLD formula is neglected
-  
-  
-  return new TF1(name,Form("sqrt(([1])**2+(2./3)*((x*sqrt(1+%f**2))**3)*(0.0136**2)*[0]/%f)",tmean,x0));
+  // log term in HLD formula is neglected  
+       
+
+  return new TF1(name,Form("sqrt(([1])**2+(2./3)*((x*sqrt(1+%f**2))**3)*(0.0136**2)*[0]/%f)",tmean,x0));                 
   
   //P is returned in GeV
 }
@@ -2046,7 +2160,7 @@ int EdbMomentumEstimator::PMSang_base_A(EdbTrackP &tr)
     }
   }
 
-  float dtx = GetDTx(txmean);  // measurements errors parametrization
+  float dtx = GetDTx(txmean);  // measurements errors parametrization     
   dtx*=dtx;
   float dty = GetDTy(txmean);  // measurements errors parametrization
   dty*=dty;
