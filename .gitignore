@@ -5,4 +5,4 @@ bin/*
 include/*
 lib/*
 macros
-
+finalsetup.sh
