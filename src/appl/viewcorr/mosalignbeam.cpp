@@ -264,6 +264,10 @@ void AlignToBeam(EdbID id, TEnv &cenv)
       l2->SetZ(mapside2->Z());
       EdbPattern *p1 = mio.GetFragment(id.ePlate, 1, i, use_saved_alignment); // get side 1
       EdbPattern *p2 = mio.GetFragment(id.ePlate, 2, i, use_saved_alignment); // get side 2
+
+      EdbPattern *pp1 = nullptr;
+      EdbPattern *pp2 = nullptr;
+
       if (p1 && p2)
       {
         p1->SetScanID(id);
@@ -274,22 +278,36 @@ void AlignToBeam(EdbID id, TEnv &cenv)
         p2->SetSide(2);
         p1->SetSegmentsFlag(0);
         p2->SetSegmentsFlag(0);
-        Log(1, "mosalignbeam::AlignFragmentToBeam", "fragment %d: %d & %d", p1->ID(), p1->N(), p2->N());
+
+        // Select only the microtracks belonging to the beam of interest.   
+        // Side 1:  0.005 < TX < 0.025
+        // Side 2: -0.010 < TX < 0.015
+
+        float min1[5] = {-1.e10, -1.e10,  0.005, -1.e10, -1.e10};
+        float max1[5] = { 1.e10,  1.e10,  0.025,  1.e10,  1.e10};
+
+        float min2[5] = {-1.e10, -1.e10, -0.010, -1.e10, -1.e10};
+        float max2[5] = { 1.e10,  1.e10,  0.015,  1.e10,  1.e10};
+
+        pp1 = p1->ExtractSubPattern(min1, max1);
+        pp2 = p2->ExtractSubPattern(min2, max2);
+
+        Log(1, "mosalignbeam::AlignFragmentToBeam", "fragment %d: selected %d & %d microtracks out of %d & %d", p1->ID(), pp1->N(), pp2->N(), p1->N(), p2->N());
 
         if (do_align_microtracks_angles)
         {
-          AlignMicrotracksAngles(*p1, cenv); // locally align microtracks angles to beam
-          AlignMicrotracksAngles(*p2, cenv); // locally align microtracks angles to beam
+          AlignMicrotracksAngles(*pp1, cenv); // locally align microtracks angles to beam
+          AlignMicrotracksAngles(*pp2, cenv); // locally align microtracks angles to beam
         }
         if (do_align_beam)
         {
-          AlignFragmentToBeam0(*p2, *p1, *l2, *l1, 10);     // align 2 to 1 using parallel beam tracks
-          AlignFragmentToBeam0(*p2, *p1, *l2, *l1, 5);      // align 2 to 1 using parallel beam tracks
-          AlignFragmentToBeam0(*p2, *p1, *l2, *l1, 3, -10); // align 2 to 1 using parallel beam tracks, assign flag -10 to used segments
+          AlignFragmentToBeam0(*pp2, *pp1, *l2, *l1, 10);     // align 2 to 1 using parallel beam tracks
+          AlignFragmentToBeam0(*pp2, *pp1, *l2, *l1, 5);      // align 2 to 1 using parallel beam tracks
+          AlignFragmentToBeam0(*pp2, *pp1, *l2, *l1, 3, -10); // align 2 to 1 using parallel beam tracks, assign flag -10 to used segments
         }
         if (do_correct_shrinkage)
         {
-          TuneShrinkage(*p2, *p1, *l2, *l1, cenv); // shrinkage correction using non-beam tracks
+          TuneShrinkage(*pp2, *pp1, *l2, *l1, cenv); // shrinkage correction using non-beam tracks
         }
         if (do_full_linking)
         {
@@ -303,11 +321,11 @@ void AlignToBeam(EdbID id, TEnv &cenv)
                               id.ePlate, id.eBrick, id.ePlate, id.eMajor, id.eMinor, p1->ID()));
           link.InitOutputFile(cpfile.Data());
           Log(1, "mosalignbeam::AlignFragmentToBeam", "full linking -> %s", cpfile.Data());
-          p1->SetSegmentsFlag(0);
-          p2->SetSegmentsFlag(0);
-          l1->ResetCorr();
-          l2->ResetCorr();
-          link.Link(*p2, *p1, *l2, *l1, cenv);
+          pp1->SetSegmentsFlag(0);
+          pp2->SetSegmentsFlag(0);
+          l1->ResetCorr();    //forse da eliminare
+          l2->ResetCorr();    //forse da eliminare
+          link.Link(*pp2, *pp1, *l2, *l1, cenv);
           TH3F *htx1 = (TH3F *)gROOT->Get(Form("htx_%d_%d", p1->Side(), p1->ID()));
           TH3F *hty1 = (TH3F *)gROOT->Get(Form("hty_%d_%d", p1->Side(), p1->ID()));
           TH3F *htx2 = (TH3F *)gROOT->Get(Form("htx_%d_%d", p2->Side(), p2->ID()));
@@ -323,6 +341,8 @@ void AlignToBeam(EdbID id, TEnv &cenv)
           link.CloseOutputFile();
         }
       }
+      SafeDelete(pp1);
+      SafeDelete(pp2);
       SafeDelete(p1);
       SafeDelete(p2);
     }
@@ -369,7 +389,7 @@ bool AlignFragmentToBeam0(EdbPattern &p1, EdbPattern &p2, EdbLayer &l1, EdbLayer
   av.eDoublets[0] = av.eDoublets[1] = 0.01;
   av.eDoublets[2] = av.eDoublets[3] = 0.0001;
   av.eDoCorrectAngle = false;
-  av.eSaveCouples = 0;
+  av.eSaveCouples = 0;        //forse da cancellare
 
   if (do_make_ab0)
     av.InitOutputFile(Form("p%.3d/%d_%d.ab0.root", p1.ScanID().ePlate, p1.ID(), p2.ID()));
@@ -443,7 +463,7 @@ void TuneShrinkage(EdbPattern &p1, EdbPattern &p2, EdbLayer &l1, EdbLayer &l2, T
   if (do_make_ab1)
     link.CloseOutputFile();
 }
-
+       
 //-----------------------------------------------------------------------
 void AlignMicrotracksAngles(EdbPattern &p, TEnv &env)
 {
