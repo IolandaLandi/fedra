@@ -19,6 +19,10 @@
 #include "EdbMosaicIO.h"
 #include "EdbAttachPath.h"
 #include <TSpectrum.h>
+#include <TCanvas.h>
+#include <TLine.h>    
+#include <TLegend.h>
+#include <TPaveText.h>
 
 using namespace std;
 using namespace TMath;
@@ -634,7 +638,7 @@ bool FindBeamWindowTX(EdbPattern &p,TEnv &env,float &txMin,float &txCenter,float
     float txMinSearch = env.GetValue("fedra.mosalignbeam.BeamPeakMinTX",-0.04);  //Lower TX limit of the peak-search region
     float txMaxSearch = env.GetValue("fedra.mosalignbeam.BeamPeakMaxTX",0.08);   //Upper TX limit of the peak-search region
     int nBins = env.GetValue("fedra.mosalignbeam.BeamPeakBins",240);             //Number of bins used for the TX peak search
-    float spectrumSigma = env.GetValue("fedra.mosalignbeam.BeamPeakSpectrumSigma", 2.0);
+    float spectrumSigma = env.GetValue("fedra.mosalignbeam.BeamPeakSpectrumSigma", 5.0);
     float spectrumThreshold = env.GetValue("fedra.mosalignbeam.BeamPeakSpectrumThreshold", 0.05);
 
     TH1F hBeamTX("hBeamTX","",nBins,txMinSearch,txMaxSearch);         //Build the TX distribution in the selected search range
@@ -649,7 +653,7 @@ bool FindBeamWindowTX(EdbPattern &p,TEnv &env,float &txMin,float &txCenter,float
     TH1F hBeamTXSmooth(hBeamTX);
 
     hBeamTXSmooth.SetDirectory(nullptr);
-    hBeamTXSmooth.Smooth(2);    //Smooth the distribution to suppress small statistical fluctuations
+    hBeamTXSmooth.Smooth(3);    //Smooth the distribution to suppress small statistical fluctuations
 
     TSpectrum spectrum(7);   // Maximum number of peaks that TSpectrum is allowed to find.
 
@@ -838,22 +842,95 @@ bool FindBeamWindowTX(EdbPattern &p,TEnv &env,float &txMin,float &txCenter,float
         return false;
     }
 
-    // 17. Define the final beam window as +/- 3 sigma
-    //---------------------------------------------------------------------
-
+    //Define the final beam window as +/- 3 sigma
     txCenter = fittedMean;
 
     txMin = fittedMean - 3.0 * fittedSigma;
     txMax = fittedMean + 3.0 * fittedSigma;
 
-    //---------------------------------------------------------------------
-    // 18. Protect against the final window leaving the search region
-    //---------------------------------------------------------------------
-
+    //Protect against the final window leaving the search region
     txMin = std::max(txMin, txMinSearch);
     txMax = std::min(txMax, txMaxSearch);
 
-    // 19. Print the result
+
+    
+  // DIAGNOSTIC PLOT
+  // Create a directory for diagnostic plots if it does not exist
+  gSystem->mkdir("beampeak_diagnostics", kTRUE);
+
+  // Create a canvas for this fragment and side
+  TCanvas *cPeak = new TCanvas(Form("cBeamPeak_%d_%d", p.Side(), p.ID()),Form("Beam TX peak - side %d fragment %d", p.Side(), p.ID()),1000, 700);
+
+  // Improve the title.
+  hBeamTX.SetTitle(Form("TX distribution - p%03d, side %d, fragment %d;TX;Microtracks",p.ScanID().ePlate, p.Side(), p.ID()));
+
+  // Give some space above the histogram for the fit and peak markers
+  double yMaxPlot = hBeamTX.GetMaximum() * 1.25;
+  hBeamTX.SetMaximum(yMaxPlot);
+
+  // Original TX histogram
+  hBeamTX.SetLineWidth(2);
+  hBeamTX.Draw("HIST");
+  hBeamTX.SetStats(0);
+
+  // Smoothed histogram used by TSpectrum
+  hBeamTXSmooth.SetLineWidth(2);
+  hBeamTXSmooth.SetLineStyle(2);
+  hBeamTXSmooth.SetLineColor(kBlue);
+  hBeamTXSmooth.Draw("HIST SAME");   
+
+  // Draw the Gaussian + linear background fit
+  fPeak.SetLineColor(kGreen + 2);
+  fPeak.SetLineWidth(3);
+  fPeak.Draw("SAME");
+
+  // Fit parameters box
+  TPaveText *fitBox = new TPaveText(0.70, 0.72, 0.90, 0.88, "NDC");
+  fitBox->SetBorderSize(1);
+  fitBox->SetFillStyle(1001);
+  fitBox->SetTextAlign(12);
+  fitBox->SetTextSize(0.03);
+  fitBox->AddText("Beam fit");
+  fitBox->AddText(Form("Mean = %.5f", fittedMean));
+  fitBox->AddText(Form("Sigma = %.5f", fittedSigma));
+  fitBox->Draw("SAME");
+
+  // Draw the +/- 3 sigma limits
+  double yLineMax = yMaxPlot;
+
+  TLine *lineMin = new TLine(txMin, 0., txMin, yLineMax);
+  TLine *lineMax = new TLine(txMax, 0., txMax, yLineMax);
+
+  lineMin->SetLineColor(kRed);
+  lineMax->SetLineColor(kRed);
+
+  lineMin->SetLineStyle(2);
+  lineMax->SetLineStyle(2);
+
+  lineMin->SetLineWidth(2);
+  lineMax->SetLineWidth(2);
+
+  lineMin->Draw("SAME");
+  lineMax->Draw("SAME");             
+
+
+  TLegend *legend = new TLegend(0.13, 0.72, 0.43, 0.88);
+  legend->SetBorderSize(0);
+  legend->SetFillStyle(0);
+  legend->AddEntry(&hBeamTX,"Original TX","l");
+  legend->AddEntry(&hBeamTXSmooth,"Smoothed TX","l");
+  legend->AddEntry(&fPeak,"Gaussian + linear background","l");
+  legend->AddEntry(lineMin,"#mu - 3#sigma / #mu + 3#sigma","l");
+  legend->Draw();
+
+  // Save the diagnostic plot
+  TString plotName;
+  plotName.Form("beampeak_diagnostics/p%03d_frag%03d_side%d.png",p.ScanID().ePlate,p.ID(),p.Side());
+  cPeak->SaveAs(plotName.Data());
+  delete cPeak;
+
+
+    //Print the result
     Log(1, "FindBeamWindowTX","fragment %d side %d: candidate=%.5f, fitted peak=%.5f, ""sigma=%.5f, TX window=[%.5f, %.5f]",p.ID(),p.Side(),peakCandidate,fittedMean,fittedSigma,txMin,txMax);
 
     return true;
