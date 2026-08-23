@@ -845,8 +845,8 @@ bool FindBeamWindowTX(EdbPattern &p,TEnv &env,float &txMin,float &txCenter,float
     //Define the final beam window as +/- 3 sigma
     txCenter = fittedMean;
 
-    txMin = fittedMean - 3.0 * fittedSigma;
-    txMax = fittedMean + 3.0 * fittedSigma;
+    txMin = std::max(fittedMean - 3.0*fittedSigma, fitMin);
+    txMax = std::min(fittedMean + 3.0*fittedSigma, fitMax);
 
     //Protect against the final window leaving the search region
     txMin = std::max(txMin, txMinSearch);
