@@ -640,13 +640,17 @@ bool FindBeamWindowTX(EdbPattern &p,TEnv &env,float &txMin,float &txCenter,float
     int nBins = env.GetValue("fedra.mosalignbeam.BeamPeakBins",240);             //Number of bins used for the TX peak search
     float spectrumSigma = env.GetValue("fedra.mosalignbeam.BeamPeakSpectrumSigma", 5.0);
     float spectrumThreshold = env.GetValue("fedra.mosalignbeam.BeamPeakSpectrumThreshold", 0.05);
+    int selectedPeak = env.GetValue("fedra.mosalignbeam.BeamPeakIndex", 1);
 
     TH1F hBeamTX("hBeamTX","",nBins,txMinSearch,txMaxSearch);         //Build the TX distribution in the selected search range
     hBeamTX.SetDirectory(nullptr);
 
     for(int i=0;i<p.N();i++)
+    {
+    	if (std::abs(p.GetSegment(i)->TY())>0.1)
+    	    continue;
         hBeamTX.Fill(p.GetSegment(i)->TX());
-
+    }
 
     // The smoothing is only used to make the peak search more stable.
     // The final Gaussian fit is performed on the original histogram.
@@ -714,7 +718,16 @@ bool FindBeamWindowTX(EdbPattern &p,TEnv &env,float &txMin,float &txCenter,float
         return false;
     }
 
-    int selectedPeak = 1;
+    //int selectedPeak = 1;
+    if (selectedPeak < 0 || selectedPeak >= (int)peakPositions.size())
+    {
+    	Log(1, "FindBeamWindowTX","fragment %d side %d: requested peak index %d, but only %zu peaks were found",p.ID(), p.Side(), selectedPeak, peakPositions.size());
+    	txMin = txMinSearch;
+    	txCenter = 0.;
+    	txMax = txMaxSearch;
+    	return false;
+    }
+
     double peakCandidate = peakPositions[selectedPeak];
 
     // Determine neighbouring peaks
@@ -940,8 +953,8 @@ bool FindBeamWindowTX(EdbPattern &p,TEnv &env,float &txMin,float &txCenter,float
 
 EdbPattern *ExtractBeamWindow(EdbPattern &p,float txMin,float txMax)
 {
-    float min[5]={-1.e10,-1.e10,txMin,-1.e10,-1.e10};   //X, Y, TX, TY, W
-    float max[5]={ 1.e10, 1.e10,txMax, 1.e10, 1.e10};
+    float min[5]={-1.e10,-1.e10,txMin,-0.1,-1.e10};   //X, Y, TX, TY, W                 
+    float max[5]={ 1.e10, 1.e10,txMax, 0.1, 1.e10};
 
     return p.ExtractSubPattern(min,max);
 }
