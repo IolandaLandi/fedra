@@ -305,8 +305,8 @@ void AlignToBeam(EdbID id, TEnv &cenv)
         }
         if (do_align_beam)
         {
-          AlignFragmentToBeam0(*pp2, *pp1, *l2, *l1, 10);     // align 2 to 1 using parallel beam tracks
-          AlignFragmentToBeam0(*pp2, *pp1, *l2, *l1, 5);      // align 2 to 1 using parallel beam tracks
+          AlignFragmentToBeam0(*pp2, *pp1, *l2, *l1, 30);     // align 2 to 1 using parallel beam tracks
+          AlignFragmentToBeam0(*pp2, *pp1, *l2, *l1, 10);      // align 2 to 1 using parallel beam tracks      
           AlignFragmentToBeam0(*pp2, *pp1, *l2, *l1, 3, -10); // align 2 to 1 using parallel beam tracks, assign flag -10 to used segments
         }
         if (do_correct_shrinkage)
