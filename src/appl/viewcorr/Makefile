@@ -8,7 +8,7 @@ TARGET	+=	$(BIN_DIR)/mosalign$(ExeSuf) $(BIN_DIR)/mosalignbeam$(ExeSuf) $(BIN_DI
 TARGET	+=	$(BIN_DIR)/tagtra$(ExeSuf) $(BIN_DIR)/cp2mos$(ExeSuf) 
 ##TARGET	+=	$(BIN_DIR)/mosvol$(ExeSuf) 
 
-ROOTLIBS      += -lMLP
+ROOTLIBS      += -lMLP -lSpectrum
 PROJECT_LIBS += -L$(FEDRA_ROOT)/lib -lScan -lMosaic -lEdb -lEbase -lEmath -lEphys -lvt -lEdr -lScan -lEdr -lEIO -lEMC -lAlignment -lDataConversion -lTreePlayer -lScan -lEdb -lEbase -lEmath -lEphys -lvt -lEdr -lScan -lEdr -lEIO -lEMC -lAlignment -lTreePlayer $(ROOTLIBS)
 
 #------------------------------------------------------------------------------
