@@ -696,7 +696,7 @@ bool FindBeamWindowTX(EdbPattern &p,TEnv &env,float &txMin,float &txCenter,float
     std::sort(peakPositions.begin(), peakPositions.end());
     // Print all peaks found by TSpectrum after sorting them in TX
     Log(1, "FindBeamWindowTX","fragment %d side %d: TSpectrum found %zu peaks in TX range [%.3f, %.3f]",p.ID(), p.Side(), peakPositions.size(), txMinSearch, txMaxSearch);
-
+      
     for (size_t i = 0; i < peakPositions.size(); ++i)
     {
         int bin = hBeamTXSmooth.FindBin(peakPositions[i]);
@@ -705,31 +705,27 @@ bool FindBeamWindowTX(EdbPattern &p,TEnv &env,float &txMin,float &txCenter,float
             i + 1,
             peakPositions[i],
             hBeamTXSmooth.GetBinContent(bin));
+    }    
+
+    // BeamPeakIndex = -1 means: always select the rightmost peak found by TSpectrum
+    if (selectedPeak == -1)
+    {
+    	selectedPeak = (int)peakPositions.size() - 1;
+        Log(1, "FindBeamWindowTX", "fragment %d side %d: selecting rightmost peak (index %d)", p.ID(), p.Side(), selectedPeak);
     }
 
-    //Evaluate the candidates
-    // This is deliberately done AFTER TSpectrum has rejected small statistical fluctuations.
-    if (peakPositions.size() < 2)
+    // Check that the requested peak exists
+    if (selectedPeak < 0 || selectedPeak >= (int)peakPositions.size())
     {
-        Log(1, "FindBeamWindowTX","fragment %d side %d: fewer than 2 peaks found in TX range [%.3f, %.3f]",p.ID(), p.Side(), txMinSearch, txMaxSearch);
+        Log(1, "FindBeamWindowTX", "fragment %d side %d: requested peak index %d, but only %zu peaks were found", p.ID(), p.Side(), selectedPeak, peakPositions.size());
         txMin = txMinSearch;
         txCenter = 0.;
         txMax = txMaxSearch;
         return false;
     }
 
-    //int selectedPeak = 1;
-    if (selectedPeak < 0 || selectedPeak >= (int)peakPositions.size())
-    {
-    	Log(1, "FindBeamWindowTX","fragment %d side %d: requested peak index %d, but only %zu peaks were found",p.ID(), p.Side(), selectedPeak, peakPositions.size());
-    	txMin = txMinSearch;
-    	txCenter = 0.;
-    	txMax = txMaxSearch;
-    	return false;
-    }
-
     double peakCandidate = peakPositions[selectedPeak];
-
+    
     // Determine neighbouring peaks
     // The neighbouring TSpectrum peaks are useful to define a reasonable local fitting region without imposing a fixed peak width.
 
