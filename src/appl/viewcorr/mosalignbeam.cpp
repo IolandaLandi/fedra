@@ -400,15 +400,11 @@ bool AlignFragmentToBeam0(EdbPattern &p1, EdbPattern &p2, EdbLayer &l1, EdbLayer
   av.Align(p1, p2, 0, flag); //-190
   EdbAffine2D *affXY = av.eCorrL[0].GetAffineXY();
   EdbAffine2D *affTXTY = av.eCorrL[0].GetAffineTXTY();
-  
-  float txNominal = -0.025;  
 
-  float dtx1 = av.CalcMeanDiff2Const(2, 0, txNominal);
+  float dtx1 = av.CalcMeanDiff2Const(2, 0, 0);
   float dty1 = av.CalcMeanDiff2Const(3, 0, 0);
-  float dtx2 = av.CalcMeanDiff2Const(2, 1, txNominal);
+  float dtx2 = av.CalcMeanDiff2Const(2, 1, 0);
   float dty2 = av.CalcMeanDiff2Const(3, 1, 0);
-  
-  Log(1, "AlignFragmentToBeam0", "fragment %d: Nominal_TX=%.5f  dtx1=%.5f dtx2=%.5f dty1=%.5f dty2=%.5f", p1.ID(), txNominal, dtx1, dtx2, dty1, dty2);
 
   EdbAffine2D aa1;
   aa1.ShiftX(-dtx1);
@@ -507,45 +503,20 @@ void AlignMicrotracksAngles(EdbPattern &p, TEnv &env)
     if (s->TX() < -0.1 || s->TX() > 0.1 || s->TY() < -0.1 || s->TY() > 0.1)
       continue;
     htx->Fill(s->X(), s->Y(), s->TX());
-    hty->Fill(s->X(), s->Y(), s->TY());    
+    hty->Fill(s->X(), s->Y(), s->TY());
   }
 
   TH2D *h2_zmean = ProfileAndCleanTH3(htx, minbin);
   TH2D *h2_zmean_ty = ProfileAndCleanTH3(hty, minbin);
-  
-  double sumTXcorr = 0.;
-  double sumTYcorr = 0.;
 
   for (int i = 0; i < p.N(); i++)
   {
     EdbSegP *s = p.GetSegment(i);
     float txcorr = h2_zmean->Interpolate(s->X(), s->Y());
     float tycorr = h2_zmean_ty->Interpolate(s->X(), s->Y());
-    
-    sumTXcorr += txcorr;
-    sumTYcorr += tycorr;
-    
-    if (i < 20)
-    {
-        Log(1, "mosalignbeam::AlignMicrotracksAngles",
-            "fragment %d side %d: i=%d "
-            "TX_before=%.5f txcorr=%.5f TX_after=%.5f "
-            "TY_before=%.5f tycorr=%.5f TY_after=%.5f",
-            p.ID(), p.Side(), i,
-            s->TX(), txcorr, s->TX() - txcorr,
-            s->TY(), tycorr, s->TY() - tycorr);
-    }
-    
     s->SetTX(s->TX() - txcorr);
-    s->SetTY(s->TY() - tycorr);    
+    s->SetTY(s->TY() - tycorr);
   }
-  
-  Log(1, "mosalignbeam::AlignMicrotracksAngles",
-    "fragment %d side %d: mean applied correction "
-    "TX=%.5f TY=%.5f",
-    p.ID(), p.Side(),
-    sumTXcorr / p.N(),
-    sumTYcorr / p.N());
 }
 
 //-----------------------------------------------------------------------
