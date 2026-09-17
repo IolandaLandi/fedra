@@ -654,6 +654,8 @@ bool FindBeamWindowTX(EdbPattern &p,TEnv &env,float &txMin,float &txCenter,float
     float spectrumSigma = env.GetValue("fedra.mosalignbeam.BeamPeakSpectrumSigma", 10.0);
     float spectrumThreshold = env.GetValue("fedra.mosalignbeam.BeamPeakSpectrumThreshold", 0.05);
     int selectedPeak = env.GetValue("fedra.mosalignbeam.BeamPeakIndex", 1);
+    double weakBeamDeltaTX = env.GetValue("fedra.mosalignbeam.BeamWeakDeltaTX", 0.017);
+    double weakBeamMeanTolerance = env.GetValue("fedra.mosalignbeam.BeamWeakMeanTolerance", 0.005);
 
     TH1F hBeamTX("hBeamTX","",nBins,txMinSearch,txMaxSearch);         //Build the TX distribution in the selected search range
     hBeamTX.SetDirectory(nullptr);
@@ -679,7 +681,7 @@ bool FindBeamWindowTX(EdbPattern &p,TEnv &env,float &txMin,float &txCenter,float
     if (nPeaks <= 0)
     {
         Log(1, "FindBeamWindowTX","fragment %d side %d: no TX peak found",p.ID(), p.Side());
-        txMin = txMinSearch;
+        txMin = txMinSearch;         
         txCenter = 0.;
         txMax = txMaxSearch;
         return false;
@@ -739,7 +741,8 @@ bool FindBeamWindowTX(EdbPattern &p,TEnv &env,float &txMin,float &txCenter,float
 
     double peakCandidate = peakPositions[selectedPeak];
     
-    // The simultaneous fit requires exactly three beam peaks.
+    // TSpectrum must find exactly three robust peaks
+    // The fourth weak beam is introduced explicitly in the fit model
   if (peakPositions.size() != 3)
   {
       Log(1, "FindBeamWindowTX", "fragment %d side %d: expected 3 TX peaks, found %zu", p.ID(), p.Side(), peakPositions.size());
@@ -751,33 +754,88 @@ bool FindBeamWindowTX(EdbPattern &p,TEnv &env,float &txMin,float &txCenter,float
       return false;
   }
     
- // ----------------------------------------------------------------------
-// Simultaneous fit of the three beam peaks with one common linear
-// background:
-//
-// G0(TX) + G1(TX) + G2(TX) + p0 + p1*TX
-// ----------------------------------------------------------------------
+// Initial positions of the four physical beam populations.
+// TSpectrum finds the three robust peaks:
+//   G0 <- peakPositions[0]
+//   G1 <- peakPositions[1]
+//   G3 <- peakPositions[2]
+// G2 is the weak beam located before the last robust peak.
+double beamSeedMean[4];
 
-const int nBeamPeaks = 3;
+beamSeedMean[0] = peakPositions[0];
+beamSeedMean[1] = peakPositions[1];
+beamSeedMean[2] = peakPositions[2] - weakBeamDeltaTX;
+beamSeedMean[3] = peakPositions[2];
+
+
+// The weak-beam seed must lie between the second and the last
+// robust TSpectrum peaks.
+if (beamSeedMean[2] <= beamSeedMean[1] ||
+    beamSeedMean[2] >= beamSeedMean[3])
+{
+    Log(1, "FindBeamWindowTX",
+        "fragment %d side %d: invalid weak-beam seed %.5f "
+        "(second robust peak=%.5f, last robust peak=%.5f)",
+        p.ID(), p.Side(),
+        beamSeedMean[2],
+        beamSeedMean[1],
+        beamSeedMean[3]);
+
+    txMin = txMinSearch;
+    txCenter = peakCandidate;
+    txMax = txMaxSearch;
+
+    return false;
+}
+
+
+// Mapping between BeamPeakIndex (three robust TSpectrum peaks) and the Gaussian component of the four-beam fit:
+// BeamPeakIndex 0 -> G0
+// BeamPeakIndex 1 -> G1
+// BeamPeakIndex 2 -> G3
+int selectedGaussian =
+    (selectedPeak == 2) ? 3 : selectedPeak;
+
+
+Log(1, "FindBeamWindowTX",
+    "fragment %d side %d: weak-beam seed TX=%.5f "
+    "(last robust peak %.5f - delta %.5f)",
+    p.ID(), p.Side(),
+    beamSeedMean[2],
+    peakPositions[2],
+    weakBeamDeltaTX); 
+    
+// Simultaneous fit of the four physical beam populations with one common linear background: G0(TX) + G1(TX) + G2(TX) + G3(TX) + p0 + p1*TX, G2 is the weak beam not resolved by TSpectrum.
+const int nBeamPeaks = 4;
 
 double binWidth = hBeamTX.GetBinWidth(1);
 double histMaximum = hBeamTX.GetMaximum();
+
 
 // Initial estimate of the common background.
 // It is used only to initialize the fit.
 double backgroundInitial = hBeamTX.GetMinimum();
 
-TF1 fAll(Form("fBeamTXAll_%d_%d", p.Side(), p.ID()), "gaus(0)+gaus(3)+gaus(6)+pol1(9)", txMinSearch, txMaxSearch);
 
-// Initial parameters for the three Gaussian components.
+TF1 fAll(
+    Form("fBeamTXAll_%d_%d", p.Side(), p.ID()),
+    "gaus(0)+gaus(3)+gaus(6)+gaus(9)+pol1(12)",
+    txMinSearch,
+    txMaxSearch);
+
+
+// Initial parameters for the four Gaussian components.
 for (int ibeam = 0; ibeam < nBeamPeaks; ++ibeam)
 {
     int base = 3 * ibeam;
 
-    double meanInitial = peakPositions[ibeam];
+    double meanInitial = beamSeedMean[ibeam];
 
-    int peakBin = hBeamTX.FindBin(meanInitial);
-    double peakContent = hBeamTX.GetBinContent(peakBin);
+    int peakBin =
+        hBeamTX.FindBin(meanInitial);
+
+    double peakContent =
+        hBeamTX.GetBinContent(peakBin);
 
     double amplitudeInitial =
         peakContent - backgroundInitial;
@@ -786,39 +844,78 @@ for (int ibeam = 0; ibeam < nBeamPeaks; ++ibeam)
         amplitudeInitial = peakContent;
 
 
-    // Mean limits: midpoint between neighbouring TSpectrum peaks.
-    // This prevents the Gaussian components from exchanging places.
+    // --------------------------------------------------------------
+    // Allowed mean range.
+    // Midpoints between neighbouring physical beam seeds prevent
+    // the Gaussian components from exchanging places.
+    // --------------------------------------------------------------
+
     double meanMin = txMinSearch;
     double meanMax = txMaxSearch;
 
     if (ibeam > 0)
     {
-        meanMin = 0.5 * (peakPositions[ibeam - 1] + peakPositions[ibeam]);
+        meanMin =
+            0.5 * (beamSeedMean[ibeam - 1] +
+                   beamSeedMean[ibeam]);
     }
 
     if (ibeam < nBeamPeaks - 1)
     {
-        meanMax = 0.5 * (peakPositions[ibeam] + peakPositions[ibeam + 1]);
+        meanMax =
+            0.5 * (beamSeedMean[ibeam] +
+                   beamSeedMean[ibeam + 1]);
     }
 
 
-    // Initial sigma estimated from the distance to the closest beam.
+    // Additional constraint for the weak beam around
+    // its physically expected position.
+    if (ibeam == 2)
+    {
+        meanMin =
+            std::max(
+                meanMin,
+                beamSeedMean[2] - weakBeamMeanTolerance);
+
+        meanMax =
+            std::min(
+                meanMax,
+                beamSeedMean[2] + weakBeamMeanTolerance);
+    }
+
+
+    // --------------------------------------------------------------
+    // Initial sigma from the distance to the closest physical beam.
+    // --------------------------------------------------------------
+
     double leftSpacing;
     double rightSpacing;
 
     if (ibeam > 0)
-        leftSpacing = peakPositions[ibeam] - peakPositions[ibeam - 1];
+        leftSpacing =
+            beamSeedMean[ibeam] -
+            beamSeedMean[ibeam - 1];
     else
-        leftSpacing = peakPositions[1] - peakPositions[0];
+        leftSpacing =
+            beamSeedMean[1] -
+            beamSeedMean[0];
+
 
     if (ibeam < nBeamPeaks - 1)
-        rightSpacing = peakPositions[ibeam + 1] - peakPositions[ibeam];
+        rightSpacing =
+            beamSeedMean[ibeam + 1] -
+            beamSeedMean[ibeam];
     else
-        rightSpacing = peakPositions[2] - peakPositions[1];
+        rightSpacing =
+            beamSeedMean[3] -
+            beamSeedMean[2];
 
-    double nearestSpacing = std::min(leftSpacing, rightSpacing);
 
-    double sigmaInitial = 0.15 * nearestSpacing;
+    double nearestSpacing =
+        std::min(leftSpacing, rightSpacing);
+
+    double sigmaInitial =
+        0.15 * nearestSpacing;
 
     if (sigmaInitial < 2.0 * binWidth)
         sigmaInitial = 2.0 * binWidth;
@@ -830,51 +927,78 @@ for (int ibeam = 0; ibeam < nBeamPeaks; ++ibeam)
     fAll.SetParameter(base + 2, sigmaInitial);
 
 
-    // Gaussian amplitude must be positive.
-    fAll.SetParLimits(base, 0., 10.0 * histMaximum);
+    // Gaussian amplitude must remain positive.
+    fAll.SetParLimits(
+        base,
+        0.,
+        10.0 * histMaximum);
 
 
-    // Keep each Gaussian around its TSpectrum peak.
-    fAll.SetParLimits(base + 1, meanMin, meanMax);
+    // Constrain each mean to its physical region.
+    fAll.SetParLimits(
+        base + 1,
+        meanMin,
+        meanMax);
 
 
-    // Sigma must be positive but not unphysically wide.
-    double sigmaMax = 0.5 * (meanMax - meanMin);
+    // Sigma must remain positive and reasonably smaller
+    // than the separation from the closest beam.
+    double sigmaMax = 0.45 * nearestSpacing;
 
-    fAll.SetParLimits(base + 2, 0.5 * binWidth, sigmaMax);
+    if (sigmaMax <= 0.5 * binWidth)
+        sigmaMax = 2.0 * binWidth;
+
+    fAll.SetParLimits(
+        base + 2,
+        0.5 * binWidth,
+        sigmaMax);
 }
 
+
 // Common linear background:
-// p0 + p1*TX
-fAll.SetParameter(9, backgroundInitial);
-fAll.SetParameter(10, 0.);
+// parameter 12 = intercept
+// parameter 13 = slope
+fAll.SetParameter(12, backgroundInitial);
+fAll.SetParameter(13, 0.);
 
 
-// Perform the simultaneous fit on the original, unsmoothed histogram.
-TFitResultPtr fitResult =
-    hBeamTX.Fit(&fAll, "RQ0");
+// Perform the simultaneous fit on the original histogram.
+TFitResultPtr fitResult = hBeamTX.Fit(&fAll, "RQ0");
+  
+int fitStatus = (int)fitResult;    
 
-int fitStatus = (int)fitResult;
 
 if (fitStatus != 0)
 {
-    Log(1, "FindBeamWindowTX", "fragment %d side %d: simultaneous 3-Gaussian fit failed, status=%d", p.ID(), p.Side(), fitStatus);
+    Log(1, "FindBeamWindowTX",
+        "fragment %d side %d: "
+        "simultaneous 4-Gaussian fit failed, status=%d",
+        p.ID(), p.Side(), fitStatus);
 
-    // Conservative fallback based on peak midpoints.
+    // Conservative fallback based on the robust TSpectrum peaks.
     txCenter = peakCandidate;
 
-    txMin = (selectedPeak > 0) ? 0.5 * (peakPositions[selectedPeak - 1] + peakCandidate) : txMinSearch;
+    txMin =
+        (selectedPeak > 0)
+        ? 0.5 * (peakPositions[selectedPeak - 1] +
+                 peakCandidate)
+        : txMinSearch;
 
-    txMax = (selectedPeak < 2) ? 0.5 * (peakCandidate + peakPositions[selectedPeak + 1]) : txMaxSearch;
+    txMax =
+        (selectedPeak < 2)
+        ? 0.5 * (peakCandidate +
+                 peakPositions[selectedPeak + 1])
+        : txMaxSearch;
 
     return false;
 }
 
 
-// Extract the fitted parameters of all three beam populations.
-double beamAmplitude[3];
-double beamMean[3];
-double beamSigma[3];
+
+// Extract the fitted parameters of all four beam populations.
+double beamAmplitude[4];
+double beamMean[4];
+double beamSigma[4];
 
 for (int ibeam = 0; ibeam < nBeamPeaks; ++ibeam)
 {
@@ -901,15 +1025,16 @@ for (int ibeam = 0; ibeam < nBeamPeaks; ++ibeam)
 
 
 // Beam selected through BeamPeakIndex.
-double fittedAmplitude = beamAmplitude[selectedPeak];
-double fittedMean = beamMean[selectedPeak];
-double fittedSigma = beamSigma[selectedPeak];
+// selectedGaussian accounts for the additional weak G2 component.
+double fittedAmplitude = beamAmplitude[selectedGaussian];
+double fittedMean = beamMean[selectedGaussian];
+double fittedSigma = beamSigma[selectedGaussian];
 
 // Adaptive beam-selection window
 // Maximum allowed window:
 //      fittedMean +/- 4*fittedSigma
 // The window is reduced only when the total contribution from the
-// other two beam populations exceeds 20% of the selected beam.
+// other three beam populations exceeds 20% of the selected beam.
 txCenter = fittedMean;
 
 double txMin4Sigma = fittedMean - 4.0 * fittedSigma;
@@ -936,13 +1061,13 @@ for (int iter = 0; iter < 2 * nBins; ++iter)
     // Selected-beam area inside the CURRENT COMPLETE window.
     double selectedArea = GaussianIntegral(fittedAmplitude, fittedMean, fittedSigma, txMin, txMax);
 
-    // Total area from the other two fitted beam populations
+    // Total area from the other three fitted beam populations
     // inside exactly the same window.
     double otherArea = 0.;
 
     for (int ibeam = 0; ibeam < nBeamPeaks; ++ibeam)
     {
-        if (ibeam == selectedPeak)
+        if (ibeam == selectedGaussian)
             continue;
         otherArea += GaussianIntegral(beamAmplitude[ibeam], beamMean[ibeam], beamSigma[ibeam], txMin, txMax);
     }
@@ -972,7 +1097,7 @@ for (int iter = 0; iter < 2 * nBins; ++iter)
 
     for (int ibeam = 0; ibeam < nBeamPeaks; ++ibeam)
     {
-        if (ibeam == selectedPeak)
+        if (ibeam == selectedGaussian)
             continue;
 
         otherLeft += GaussianIntegral(beamAmplitude[ibeam], beamMean[ibeam], beamSigma[ibeam], txMin, fittedMean);
@@ -1027,7 +1152,7 @@ txMax = std::min(txMax, txMaxSearch);
 // the values can be interpreted approximately as histogram entries.
 double selectedEntries = GaussianIntegral(fittedAmplitude, fittedMean, fittedSigma, txMin, txMax) / binWidth;
 double otherEntries = 0.;
-double beamEntries[3] = {0., 0., 0.};
+double beamEntries[4] = {0., 0., 0., 0.};
 
 for (int ibeam = 0;
      ibeam < nBeamPeaks;
@@ -1035,7 +1160,7 @@ for (int ibeam = 0;
 {
     beamEntries[ibeam] =
         GaussianIntegral(beamAmplitude[ibeam], beamMean[ibeam], beamSigma[ibeam], txMin, txMax) / binWidth;
-    if (ibeam != selectedPeak)
+    if (ibeam != selectedGaussian)
         otherEntries += beamEntries[ibeam];
 }                       
 
@@ -1047,19 +1172,62 @@ if (selectedEntries > 0.)
     finalOtherFraction = otherEntries / selectedEntries;
 }
 
+// ----------------------------------------------------------------------
+// Diagnostic information about the fitted beam populations
+// over the full TX search range.
+// ----------------------------------------------------------------------
+
+double totalBeamEntries[4] = {0., 0., 0., 0.};
+
+for (int ibeam = 0; ibeam < nBeamPeaks; ++ibeam)   
+{
+    totalBeamEntries[ibeam] =
+        GaussianIntegral(
+            beamAmplitude[ibeam],
+            beamMean[ibeam],
+            beamSigma[ibeam],
+            txMinSearch,
+            txMaxSearch) / binWidth;
+}
+
+
+// Fitted Gaussian amplitudes
+Log(1, "FindBeamWindowTX",
+    "fragment %d side %d: fitted amplitudes: "
+    "G0=%.1f G1=%.1f G2weak=%.1f G3=%.1f",
+    p.ID(), p.Side(),
+    beamAmplitude[0],
+    beamAmplitude[1],
+    beamAmplitude[2],
+    beamAmplitude[3]);
+
+
+// Estimated total populations of the four beam Gaussian components
+Log(1, "FindBeamWindowTX",
+    "fragment %d side %d: total fitted beam entries: "
+    "G0=%.0f G1=%.0f G2weak=%.0f G3=%.0f",
+    p.ID(), p.Side(),
+    totalBeamEntries[0],
+    totalBeamEntries[1],
+    totalBeamEntries[2],
+    totalBeamEntries[3]);
+
 // Diagnostic information about the simultaneous fit.
 Log(1, "FindBeamWindowTX",
     "fragment %d side %d: "
     "fitted beams: "
     "beam0(mu=%.5f sigma=%.5f) "
     "beam1(mu=%.5f sigma=%.5f) "
-    "beam2(mu=%.5f sigma=%.5f), "
-    "selected beam index=%d",
+    "beam2-weak(mu=%.5f sigma=%.5f) "
+    "beam3(mu=%.5f sigma=%.5f), "
+    "selected robust peak=%d -> Gaussian=%d",
     p.ID(), p.Side(),
     beamMean[0], beamSigma[0],
     beamMean[1], beamSigma[1],
     beamMean[2], beamSigma[2],
-    selectedPeak);
+    beamMean[3], beamSigma[3],
+    selectedPeak + 1,
+    selectedGaussian);
 
 
 // Diagnostic information about the final selection.
@@ -1114,7 +1282,7 @@ if (!contaminationOK)
   //hBeamTXSmooth.SetLineColor(kBlue);
   //hBeamTXSmooth.Draw("HIST SAME");   
 
-  // Draw the simultaneous three-Gaussian + common-background fit
+  // Draw the simultaneous four-Gaussian + common-background fit
   fAll.SetLineColor(kGreen + 2);
   fAll.SetLineWidth(2);
   fAll.Draw("SAME");
@@ -1123,6 +1291,7 @@ if (!contaminationOK)
 TF1 fG0(Form("fBeamTXG0_%d_%d", p.Side(), p.ID()), "gaus(0)", txMinSearch, txMaxSearch);
 TF1 fG1(Form("fBeamTXG1_%d_%d", p.Side(), p.ID()), "gaus(0)", txMinSearch, txMaxSearch);
 TF1 fG2(Form("fBeamTXG2_%d_%d", p.Side(), p.ID()), "gaus(0)", txMinSearch, txMaxSearch);
+TF1 fG3(Form("fBeamTXG3_%d_%d", p.Side(), p.ID()), "gaus(0)", txMinSearch, txMaxSearch);
 
 // Beam 0
 fG0.SetParameter(0, beamAmplitude[0]);
@@ -1139,43 +1308,47 @@ fG2.SetParameter(0, beamAmplitude[2]);
 fG2.SetParameter(1, beamMean[2]);
 fG2.SetParameter(2, beamSigma[2]);
 
-
-// Line styles
-fG0.SetLineColor(kGray + 1);
-fG1.SetLineColor(kGray + 1);
-fG2.SetLineColor(kGray + 1);
-fG0.SetLineStyle(2);
-fG1.SetLineStyle(2);
-fG2.SetLineStyle(2);
-fG0.SetLineWidth(2);
-fG1.SetLineWidth(2);
-fG2.SetLineWidth(2);
+// Beam 3
+fG3.SetParameter(0, beamAmplitude[3]);
+fG3.SetParameter(1, beamMean[3]);
+fG3.SetParameter(2, beamSigma[3]);
 
 
-// Highlight only the selected beam
-if (selectedPeak == 0)
+// Style and draw the four Gaussian components.
+// All Gaussians have the same width/style.
+// The selected beam is orange, all other beams are gray.
+TF1 *beamFunctions[4] =
 {
-    fG0.SetLineColor(kOrange + 7);
-}
-else if (selectedPeak == 1)
+    &fG0,
+    &fG1,
+    &fG2,
+    &fG3
+};
+
+
+for (int ibeam = 0; ibeam < nBeamPeaks; ++ibeam)
 {
-    fG1.SetLineColor(kOrange + 7);
-}
-else if (selectedPeak == 2)
-{
-    fG2.SetLineColor(kOrange + 7);
+    beamFunctions[ibeam]->SetLineColor(kGray + 1);
+    beamFunctions[ibeam]->SetLineStyle(2);
+    beamFunctions[ibeam]->SetLineWidth(2);
 }
 
-fG0.Draw("SAME");
-fG1.Draw("SAME");
-fG2.Draw("SAME");
+
+// Highlight the selected physical beam.
+beamFunctions[selectedGaussian]-> SetLineColor(kOrange + 7);
+
+// Draw all Gaussian components.
+for (int ibeam = 0; ibeam < nBeamPeaks; ++ibeam)
+{
+    beamFunctions[ibeam]->Draw("SAME");
+}
 
 
 // Draw the common linear background
 TF1 fBackground(Form("fBeamTXBackground_%d_%d", p.Side(), p.ID()), "pol1(0)", txMinSearch, txMaxSearch);
 
-fBackground.SetParameter(0, fAll.GetParameter(9));
-fBackground.SetParameter(1, fAll.GetParameter(10));
+fBackground.SetParameter(0, fAll.GetParameter(12));
+fBackground.SetParameter(1, fAll.GetParameter(13));
 fBackground.SetLineColor(kGray + 2);
 fBackground.SetLineStyle(3);
 fBackground.SetLineWidth(2);
@@ -1212,27 +1385,24 @@ fBackground.Draw("SAME");
   lineMax->Draw("SAME");             
 
 
-  TLegend *legend = new TLegend(0.13, 0.62, 0.48, 0.88);
-  legend->SetBorderSize(0);
-  legend->SetFillStyle(0);
-  legend->SetTextSize(0.025);
-  legend->AddEntry(&hBeamTX,"Original TX","l");
-  //legend->AddEntry(&hBeamTXSmooth,"Smoothed TX","l");
-  legend->AddEntry(&fAll, "Total fit", "l");
-  if (selectedPeak == 0)
-    legend->AddEntry(&fG0, "Selected beam Gaussian", "l");
-  else if (selectedPeak == 1)
-    legend->AddEntry(&fG1, "Selected beam Gaussian", "l");
-  else
-    legend->AddEntry(&fG2, "Selected beam Gaussian", "l");
+   TLegend *legend = new TLegend(0.13, 0.62, 0.48, 0.88);
 
-  if (selectedPeak != 0)
-    legend->AddEntry(&fG0, "Other beam Gaussians", "l");
-  else
-    legend->AddEntry(&fG1, "Other beam Gaussians", "l");
-  legend->AddEntry(&fBackground, "Common linear background", "l");
-  legend->AddEntry(lineMin, "Final beam-selection window", "l");
-  legend->Draw();       
+legend->SetBorderSize(0);
+legend->SetFillStyle(0);
+legend->SetTextSize(0.025);
+
+legend->AddEntry(&hBeamTX, "Original TX", "l");
+legend->AddEntry(&fAll, "Total fit", "l");
+legend->AddEntry(beamFunctions[selectedGaussian], "Selected beam Gaussian", "l");
+
+// Pick one non-selected Gaussian as visual example
+// for all the gray Gaussian components.
+int otherGaussian = (selectedGaussian == 0) ? 1 : 0;
+
+legend->AddEntry(beamFunctions[otherGaussian], "Other beam Gaussians", "l");
+legend->AddEntry(&fBackground, "Common linear background", "l");
+legend->AddEntry(lineMin, "Final beam-selection window", "l");
+legend->Draw();  
 
   // Save the diagnostic plot
   TString plotName;
