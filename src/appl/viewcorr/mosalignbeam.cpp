@@ -653,7 +653,7 @@ bool FindBeamWindowTX(EdbPattern &p,TEnv &env,float &txMin,float &txCenter,float
     int nBins = env.GetValue("fedra.mosalignbeam.BeamPeakBins",240);             //Number of bins used for the TX peak search
     float spectrumSigma = env.GetValue("fedra.mosalignbeam.BeamPeakSpectrumSigma", 10.0);
     float spectrumThreshold = env.GetValue("fedra.mosalignbeam.BeamPeakSpectrumThreshold", 0.05);
-    int selectedPeak = env.GetValue("fedra.mosalignbeam.BeamPeakIndex", 1);
+    int selectedBeam = env.GetValue("fedra.mosalignbeam.BeamPeakIndex", 1);
     double weakBeamDeltaTX = env.GetValue("fedra.mosalignbeam.BeamWeakDeltaTX", 0.017);
     double weakBeamMeanTolerance = env.GetValue("fedra.mosalignbeam.BeamWeakMeanTolerance", 0.005);
 
@@ -723,23 +723,50 @@ bool FindBeamWindowTX(EdbPattern &p,TEnv &env,float &txMin,float &txCenter,float
     }    
 
     // BeamPeakIndex = -1 means: always select the rightmost peak found by TSpectrum
-    if (selectedPeak == -1)
+    if (selectedBeam == -1)
     {
-    	selectedPeak = (int)peakPositions.size() - 1;
-        Log(1, "FindBeamWindowTX", "fragment %d side %d: selecting rightmost peak (index %d)", p.ID(), p.Side(), selectedPeak);
+    	selectedBeam = 3;
+        Log(1, "FindBeamWindowTX", "fragment %d side %d: selecting rightmost beam", p.ID(), p.Side());
     }
 
     // Check that the requested peak exists
-    if (selectedPeak < 0 || selectedPeak >= (int)peakPositions.size())
+    if (selectedBeam < 0 || selectedBeam >3)
     {
-        Log(1, "FindBeamWindowTX", "fragment %d side %d: requested peak index %d, but only %zu peaks were found", p.ID(), p.Side(), selectedPeak, peakPositions.size());
+        Log(1, "FindBeamWindowTX", "fragment %d side %d: invalid BeamPeakIndex = %d (allowed: 0, 1, 2, 3; -1 = rightmost)", p.ID(), p.Side(), selectedBeam);
         txMin = txMinSearch;
         txCenter = 0.;
         txMax = txMaxSearch;
         return false;
     }
 
-    double peakCandidate = peakPositions[selectedPeak];
+    // Mapping from the physical beam index to the three robust TSpectrum peaks.
+    // selectedBeam 0 -> peakPositions[0]
+    // selectedBeam 1 -> peakPositions[1]
+    // selectedBeam 2 -> weak beam: no direct TSpectrum peak
+    // selectedBeam 3 -> peakPositions[2]
+    int selectedPeak = -1;
+
+    if (selectedBeam == 0) selectedPeak = 0;
+    else if (selectedBeam == 1) selectedPeak = 1;
+    else if (selectedBeam == 3) selectedPeak = 2;
+
+    // For robust beams, check that the corresponding TSpectrum peak exists.
+    // No such check is needed here for the weak beam.
+    if (selectedBeam != 2 && (selectedPeak < 0 || selectedPeak >= (int)peakPositions.size()))
+    {
+        Log(1, "FindBeamWindowTX",
+        "fragment %d side %d: requested robust beam %d, "
+        "but only %zu TSpectrum peaks were found",
+        p.ID(), p.Side(),
+        selectedBeam,
+        peakPositions.size());
+
+    txMin = txMinSearch;
+    txCenter = 0.;
+    txMax = txMaxSearch;
+
+    return false;
+}
     
     // TSpectrum must find exactly three robust peaks
     // The fourth weak beam is introduced explicitly in the fit model
@@ -747,10 +774,42 @@ bool FindBeamWindowTX(EdbPattern &p,TEnv &env,float &txMin,float &txCenter,float
   {
       Log(1, "FindBeamWindowTX", "fragment %d side %d: expected 3 TX peaks, found %zu", p.ID(), p.Side(), peakPositions.size());
 
-      // Conservative fallback: use the midpoint with neighbouring peaks.
-      txCenter = peakCandidate;
-      txMin = (selectedPeak > 0) ? 0.5 * (peakPositions[selectedPeak - 1] + peakCandidate): txMinSearch;
-      txMax = (selectedPeak + 1 < (int)peakPositions.size()) ? 0.5 * (peakCandidate + peakPositions[selectedPeak + 1]): txMaxSearch;
+      // ----------------------------------------------------------
+    // ROBUST BEAMS:
+    // keep exactly the same midpoint fallback used previously.
+    // ----------------------------------------------------------
+    if (selectedBeam != 2)
+    {
+        double peakCandidate =
+            peakPositions[selectedPeak];
+
+        txCenter = peakCandidate;
+
+        txMin =
+            (selectedPeak > 0)
+            ? 0.5 * (peakPositions[selectedPeak - 1] +
+                     peakCandidate)
+            : txMinSearch;
+
+        txMax =
+            (selectedPeak + 1 < (int)peakPositions.size())
+            ? 0.5 * (peakCandidate +
+                     peakPositions[selectedPeak + 1])
+            : txMaxSearch;
+    }
+    else
+    {
+        // The weak beam is not directly defined by a TSpectrum peak.
+        // Its selection requires the standard 3-robust-peak configuration.
+        Log(1, "FindBeamWindowTX",
+            "fragment %d side %d: weak-beam selection requires "
+            "the 3 robust TSpectrum peaks",
+            p.ID(), p.Side());
+
+        txMin = txMinSearch;
+        txCenter = 0.;
+        txMax = txMaxSearch;
+    }
       return false;
   }
     
@@ -767,6 +826,10 @@ beamSeedMean[1] = peakPositions[1];
 beamSeedMean[2] = peakPositions[2] - weakBeamDeltaTX;
 beamSeedMean[3] = peakPositions[2];
 
+// Candidate position corresponding to the selected physical beam.
+// For robust beams this is exactly the same TSpectrum peak used before.
+// For G2 it is the expected weak-beam seed.
+double peakCandidate = (selectedBeam == 2) ? beamSeedMean[2] : peakPositions[selectedPeak];
 
 // The weak-beam seed must lie between the second and the last
 // robust TSpectrum peaks.
@@ -789,12 +852,12 @@ if (beamSeedMean[2] <= beamSeedMean[1] ||
 }
 
 
-// Mapping between BeamPeakIndex (three robust TSpectrum peaks) and the Gaussian component of the four-beam fit:
-// BeamPeakIndex 0 -> G0
-// BeamPeakIndex 1 -> G1
-// BeamPeakIndex 2 -> G3
-int selectedGaussian =
-    (selectedPeak == 2) ? 3 : selectedPeak;
+// BeamPeakIndex now directly identifies the physical Gaussian:
+// 0 -> G0
+// 1 -> G1
+// 2 -> G2 weak
+// 3 -> G3
+int selectedGaussian = selectedBeam;
 
 
 Log(1, "FindBeamWindowTX",
@@ -831,14 +894,11 @@ for (int ibeam = 0; ibeam < nBeamPeaks; ++ibeam)
 
     double meanInitial = beamSeedMean[ibeam];
 
-    int peakBin =
-        hBeamTX.FindBin(meanInitial);
+    int peakBin = hBeamTX.FindBin(meanInitial);
 
-    double peakContent =
-        hBeamTX.GetBinContent(peakBin);
+    double peakContent = hBeamTX.GetBinContent(peakBin);
 
-    double amplitudeInitial =
-        peakContent - backgroundInitial;
+    double amplitudeInitial = peakContent - backgroundInitial;
 
     if (amplitudeInitial <= 0.)
         amplitudeInitial = peakContent;
@@ -959,7 +1019,7 @@ for (int ibeam = 0; ibeam < nBeamPeaks; ++ibeam)
 // parameter 12 = intercept
 // parameter 13 = slope
 fAll.SetParameter(12, backgroundInitial);
-fAll.SetParameter(13, 0.);
+fAll.SetParameter(13, 0.);   
 
 
 // Perform the simultaneous fit on the original histogram.
@@ -975,20 +1035,22 @@ if (fitStatus != 0)
         "simultaneous 4-Gaussian fit failed, status=%d",
         p.ID(), p.Side(), fitStatus);
 
-    // Conservative fallback based on the robust TSpectrum peaks.
-    txCenter = peakCandidate;
+    // For the weak beam use the physical seed positions.
+    // For robust beams keep exactly the previous TSpectrum midpoint fallback.
+    if (selectedBeam == 2)
+    {
+        txCenter = beamSeedMean[2];
+        txMin = 0.5 * (beamSeedMean[1] + beamSeedMean[2]);
+        txMax = 0.5 * (beamSeedMean[2] + beamSeedMean[3]);
+    }
+    else
+    {
+        // Original robust-beam fallback: unchanged.
+        txCenter = peakCandidate;
 
-    txMin =
-        (selectedPeak > 0)
-        ? 0.5 * (peakPositions[selectedPeak - 1] +
-                 peakCandidate)
-        : txMinSearch;
-
-    txMax =
-        (selectedPeak < 2)
-        ? 0.5 * (peakCandidate +
-                 peakPositions[selectedPeak + 1])
-        : txMaxSearch;
+        txMin = (selectedPeak > 0) ? 0.5 * (peakPositions[selectedPeak - 1] + peakCandidate) : txMinSearch;
+        txMax = (selectedPeak < 2) ? 0.5 * (peakCandidate + peakPositions[selectedPeak + 1]) : txMaxSearch;
+    }
 
     return false;
 }
@@ -1016,9 +1078,21 @@ for (int ibeam = 0; ibeam < nBeamPeaks; ++ibeam)
         beamSigma[ibeam] <= 0.)
     {
         Log(1, "FindBeamWindowTX", "fragment %d side %d: invalid parameters for fitted beam %d", p.ID(), p.Side(), ibeam);
-        txCenter = peakCandidate;
-        txMin = (selectedPeak > 0) ? 0.5 * (peakPositions[selectedPeak - 1] + peakCandidate) : txMinSearch;
-        txMax = (selectedPeak < 2) ? 0.5 * (peakCandidate + peakPositions[selectedPeak + 1]) : txMaxSearch;
+        if (selectedBeam == 2)
+        {
+            txCenter = beamSeedMean[2];
+            txMin = 0.5 * (beamSeedMean[1] + beamSeedMean[2]);
+            txMax = 0.5 * (beamSeedMean[2] + beamSeedMean[3]);
+        }
+        else
+        {
+           // Original robust-beam fallback: unchanged.
+           txCenter = peakCandidate;
+
+           txMin = (selectedPeak > 0) ? 0.5 * (peakPositions[selectedPeak - 1] + peakCandidate) : txMinSearch;
+
+           txMax = (selectedPeak < 2) ? 0.5 * (peakCandidate + peakPositions[selectedPeak + 1]) : txMaxSearch;
+        }
         return false;
     }
 }
@@ -1172,11 +1246,9 @@ if (selectedEntries > 0.)
     finalOtherFraction = otherEntries / selectedEntries;
 }
 
-// ----------------------------------------------------------------------
+
 // Diagnostic information about the fitted beam populations
 // over the full TX search range.
-// ----------------------------------------------------------------------
-
 double totalBeamEntries[4] = {0., 0., 0., 0.};
 
 for (int ibeam = 0; ibeam < nBeamPeaks; ++ibeam)   
@@ -1220,13 +1292,13 @@ Log(1, "FindBeamWindowTX",
     "beam1(mu=%.5f sigma=%.5f) "
     "beam2-weak(mu=%.5f sigma=%.5f) "
     "beam3(mu=%.5f sigma=%.5f), "
-    "selected robust peak=%d -> Gaussian=%d",
+    "selected beam=%d -> Gaussian=%d",
     p.ID(), p.Side(),
     beamMean[0], beamSigma[0],
     beamMean[1], beamSigma[1],
     beamMean[2], beamSigma[2],
     beamMean[3], beamSigma[3],
-    selectedPeak + 1,
+    selectedBeam,
     selectedGaussian);
 
 
@@ -1241,14 +1313,14 @@ Log(1, "FindBeamWindowTX",
     txMin4Sigma,
     txMax4Sigma,
     txMin,
-    txMax,
+    txMax,    
     selectedEntries,
     otherEntries,
     100.0 * finalOtherFraction,
     100.0 * maxOtherBeamFraction);
 
 
-if (!contaminationOK)
+if (!contaminationOK)   
 {
     Log(1, "FindBeamWindowTX",
         "fragment %d side %d: WARNING: "
@@ -1287,7 +1359,7 @@ if (!contaminationOK)
   fAll.SetLineWidth(2);
   fAll.Draw("SAME");
 
-  // Draw the three individual Gaussian components
+  // Draw the four individual Gaussian components
 TF1 fG0(Form("fBeamTXG0_%d_%d", p.Side(), p.ID()), "gaus(0)", txMinSearch, txMaxSearch);
 TF1 fG1(Form("fBeamTXG1_%d_%d", p.Side(), p.ID()), "gaus(0)", txMinSearch, txMaxSearch);
 TF1 fG2(Form("fBeamTXG2_%d_%d", p.Side(), p.ID()), "gaus(0)", txMinSearch, txMaxSearch);
@@ -1360,7 +1432,7 @@ fBackground.Draw("SAME");
   fitBox->SetFillStyle(1001);
   fitBox->SetTextAlign(12);
   fitBox->SetTextSize(0.026);
-  fitBox->AddText(Form("Selected beam: peak %d", selectedPeak+1));
+  fitBox->AddText(Form("Selected beam index: %d", selectedBeam));
   fitBox->AddText(Form("Mean = %.5f", fittedMean));
   fitBox->AddText(Form("Sigma = %.5f", fittedSigma));
   fitBox->AddText(Form("Other/selected = %.1f%%", 100.0 * finalOtherFraction));
