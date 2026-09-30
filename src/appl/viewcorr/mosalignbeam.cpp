@@ -66,6 +66,8 @@ void set_default_link(TEnv &cenv)
   cenv.SetValue("fedra.mosalignbeam.DoAlignMicrotracksAngles", 0);
   cenv.SetValue("fedra.mosalignbeam.DoAlignMicrotracksAngles.bin", 100);
   cenv.SetValue("fedra.mosalignbeam.DoAlignMicrotracksAngles.minbin", 20);
+  cenv.SetValue("fedra.mosalignbeam.SelectWeakPlusG3", 0);
+  cenv.SetValue("fedra.mosalignbeam.GroupMaxOtherBeamFraction", 0.05);
 
   cenv.SetValue("fedra.link.AFID", 1); // 1 is usually fine for scanned data; for the db-read data use 0!
   cenv.SetValue("fedra.link.DoImageCorr", 0);
@@ -656,6 +658,8 @@ bool FindBeamWindowTX(EdbPattern &p,TEnv &env,float &txMin,float &txCenter,float
     int selectedBeam = env.GetValue("fedra.mosalignbeam.BeamPeakIndex", 1);
     double weakBeamDeltaTX = env.GetValue("fedra.mosalignbeam.BeamWeakDeltaTX", 0.017);
     double weakBeamMeanTolerance = env.GetValue("fedra.mosalignbeam.BeamWeakMeanTolerance", 0.005);
+    int selectWeakPlusG3 = env.GetValue("fedra.mosalignbeam.SelectWeakPlusG3", 0);
+    double groupMaxOtherBeamFraction = env.GetValue("fedra.mosalignbeam.GroupMaxOtherBeamFraction", 0.05);
 
     TH1F hBeamTX("hBeamTX","",nBins,txMinSearch,txMaxSearch);         //Build the TX distribution in the selected search range
     hBeamTX.SetDirectory(nullptr);
@@ -858,6 +862,7 @@ if (beamSeedMean[2] <= beamSeedMean[1] ||
 // 2 -> G2 weak
 // 3 -> G3
 int selectedGaussian = selectedBeam;
+bool weakPlusG3Mode = (selectedBeam == 2 && selectWeakPlusG3 != 0);
 
 
 Log(1, "FindBeamWindowTX",
@@ -986,20 +991,11 @@ for (int ibeam = 0; ibeam < nBeamPeaks; ++ibeam)
     fAll.SetParameter(base + 1, meanInitial);
     fAll.SetParameter(base + 2, sigmaInitial);
 
-
     // Gaussian amplitude must remain positive.
-    fAll.SetParLimits(
-        base,
-        0.,
-        10.0 * histMaximum);
-
+    fAll.SetParLimits(base, 0., 10.0 * histMaximum);
 
     // Constrain each mean to its physical region.
-    fAll.SetParLimits(
-        base + 1,
-        meanMin,
-        meanMax);
-
+    fAll.SetParLimits(base + 1, meanMin, meanMax);
 
     // Sigma must remain positive and reasonably smaller
     // than the separation from the closest beam.
@@ -1008,10 +1004,7 @@ for (int ibeam = 0; ibeam < nBeamPeaks; ++ibeam)
     if (sigmaMax <= 0.5 * binWidth)
         sigmaMax = 2.0 * binWidth;
 
-    fAll.SetParLimits(
-        base + 2,
-        0.5 * binWidth,
-        sigmaMax);
+    fAll.SetParLimits(base + 2, 0.5 * binWidth, sigmaMax);
 }
 
 
@@ -1112,7 +1105,6 @@ double fittedSigma = beamSigma[selectedGaussian];
 txCenter = fittedMean;
 
 double txMin4Sigma = fittedMean - 4.0 * fittedSigma;
-
 double txMax4Sigma = fittedMean + 4.0 * fittedSigma;
 
 
@@ -1215,6 +1207,77 @@ for (int iter = 0; iter < 2 * nBins; ++iter)
     }
 }
 
+// Optional G2+G3 selection mode.
+// Active only when: BeamPeakIndex = 2 && SelectWeakPlusG3 = 1
+// The standard single-beam selection above is left unchanged.
+// Selection strategy analogous to the standard single-beam selection:
+//   - start from a wide window;
+//   - compute the INTEGRATED contamination;
+//   - reduce the contaminated boundary one TX bin at a time
+//     until the contamination is <= 20%.
+bool groupContaminationOK = false;
+double groupCurrentOtherFraction = 0.;
+
+double groupTxMinInitial = 0.;
+double groupTxMaxInitial = 0.;
+
+if (weakPlusG3Mode)
+{
+    // Keep the fitted weak-beam position as reference center.
+    txCenter = beamMean[2];
+
+    // Initial wide window: left  edge = G2 mean - 4 sigma_G2 - right edge = G3 mean + 4 sigma_G3
+    groupTxMinInitial = std::max(beamMean[2] - 4.0 * beamSigma[2], (double)txMinSearch);
+    groupTxMaxInitial = std::min(beamMean[3] + 4.0 * beamSigma[3], (double)txMaxSearch);
+
+    txMin = (float)groupTxMinInitial;
+    txMax = (float)groupTxMaxInitial;
+
+    // Adaptive reduction. Selected population = G2 + G3  Other population    = G0 + G1
+    // Require: Integral(G0+G1) / Integral(G2+G3) <= 20%
+    // Only the left boundary is moved because G0 and G1 are located on the left of the selected G2+G3 group.
+    for (int iter = 0; iter < 2 * nBins; ++iter)
+    {
+        double selectedArea = GaussianIntegral(beamAmplitude[2], beamMean[2], beamSigma[2], txMin, txMax) + GaussianIntegral(beamAmplitude[3], beamMean[3], beamSigma[3], txMin, txMax);
+        double otherArea = GaussianIntegral(beamAmplitude[0], beamMean[0], beamSigma[0], txMin, txMax) + GaussianIntegral(beamAmplitude[1], beamMean[1], beamSigma[1], txMin, txMax);
+
+        if (selectedArea <= 0.)
+            break;
+
+        groupCurrentOtherFraction = otherArea / selectedArea;
+
+        // Requested integrated purity reached.
+        if (groupCurrentOtherFraction <= groupMaxOtherBeamFraction)
+        {
+            groupContaminationOK = true;
+            break;
+        }
+
+        // As in the standard single-beam selection, do not
+        // shrink beyond the center of the selected population.
+        // Here the relevant left-side reference is the G2 mean.
+        if (txMin + selectionStep >= beamMean[2])
+            break;
+
+        // Contamination comes from the left (G0 and G1),
+        // therefore move only the left boundary.
+        txMin += selectionStep;
+    }
+
+    Log(1, "FindBeamWindowTX",
+        "fragment %d side %d: G2+G3 mode: "
+        "initial window=[%.5f, %.5f], "
+        "final window=[%.5f, %.5f], "
+        "integrated (G0+G1)/(G2+G3)=%.1f%% "
+        "(maximum allowed %.1f%%)",
+        p.ID(), p.Side(),
+        groupTxMinInitial,
+        groupTxMaxInitial,
+        txMin,
+        txMax,
+        100.0 * groupCurrentOtherFraction,
+        100.0 * groupMaxOtherBeamFraction);
+}
 
 // Final protection against leaving the search range.
 txMin = std::max(txMin, txMinSearch);
@@ -1228,15 +1291,20 @@ double selectedEntries = GaussianIntegral(fittedAmplitude, fittedMean, fittedSig
 double otherEntries = 0.;
 double beamEntries[4] = {0., 0., 0., 0.};
 
-for (int ibeam = 0;
-     ibeam < nBeamPeaks;
-     ++ibeam)
+for (int ibeam = 0; ibeam < nBeamPeaks; ++ibeam)
 {
-    beamEntries[ibeam] =
-        GaussianIntegral(beamAmplitude[ibeam], beamMean[ibeam], beamSigma[ibeam], txMin, txMax) / binWidth;
+    beamEntries[ibeam] = GaussianIntegral(beamAmplitude[ibeam], beamMean[ibeam], beamSigma[ibeam], txMin, txMax) / binWidth;
     if (ibeam != selectedGaussian)
         otherEntries += beamEntries[ibeam];
-}                       
+}    
+
+// In G2+G3 mode both Gaussian components belong to the
+// selected population. Only G0 and G1 are counted as other beams.
+if (weakPlusG3Mode)
+{
+    selectedEntries = beamEntries[2] + beamEntries[3];
+    otherEntries = beamEntries[0] + beamEntries[1];
+}                   
 
 
 double finalOtherFraction = 0.;
@@ -1303,30 +1371,57 @@ Log(1, "FindBeamWindowTX",
 
 
 // Diagnostic information about the final selection.
-Log(1, "FindBeamWindowTX",
-    "fragment %d side %d: "
-    "initial 4sigma window=[%.5f, %.5f], "
-    "final window=[%.5f, %.5f], "
-    "estimated entries: selected=%.0f other beams=%.0f, "
-    "other/selected=%.1f%% (maximum allowed %.1f%%)",
-    p.ID(), p.Side(),
-    txMin4Sigma,
-    txMax4Sigma,
-    txMin,
-    txMax,    
-    selectedEntries,
-    otherEntries,
-    100.0 * finalOtherFraction,
-    100.0 * maxOtherBeamFraction);
+if (weakPlusG3Mode)
+{
+    Log(1, "FindBeamWindowTX",
+        "fragment %d side %d: "
+        "G2+G3 final window=[%.5f, %.5f], "
+        "estimated entries: G2+G3=%.0f G0+G1=%.0f, "
+        "(G0+G1)/(G2+G3)=%.1f%%",
+        p.ID(), p.Side(),
+        txMin,
+        txMax,
+        selectedEntries,
+        otherEntries,
+        100.0 * finalOtherFraction);
+}
+else
+{
+    Log(1, "FindBeamWindowTX",
+        "fragment %d side %d: "
+        "initial 4sigma window=[%.5f, %.5f], "
+        "final window=[%.5f, %.5f], "
+        "estimated entries: selected=%.0f other beams=%.0f, "
+        "other/selected=%.1f%% (maximum allowed %.1f%%)",
+        p.ID(), p.Side(),
+        txMin4Sigma,
+        txMax4Sigma,
+        txMin,
+        txMax,
+        selectedEntries,
+        otherEntries,
+        100.0 * finalOtherFraction,
+        100.0 * maxOtherBeamFraction);
+}
 
-
-if (!contaminationOK)   
+if (!weakPlusG3Mode && !contaminationOK)   
 {
     Log(1, "FindBeamWindowTX",
         "fragment %d side %d: WARNING: "
         "could not reach the requested %.1f%% other-beam fraction",              
         p.ID(), p.Side(),
         100.0 * maxOtherBeamFraction);
+}
+
+if (weakPlusG3Mode && !groupContaminationOK)
+{
+    Log(1, "FindBeamWindowTX",
+        "fragment %d side %d: WARNING: "
+        "G2+G3 selection could not reach the requested %.1f%% "
+        "integrated (G0+G1)/(G2+G3) contamination "
+        "before reaching the G2 mean",
+        p.ID(), p.Side(),
+        100.0 * groupMaxOtherBeamFraction);
 }
     
   // DIAGNOSTIC PLOT       
@@ -1407,7 +1502,15 @@ for (int ibeam = 0; ibeam < nBeamPeaks; ++ibeam)
 
 
 // Highlight the selected physical beam.
-beamFunctions[selectedGaussian]-> SetLineColor(kOrange + 7);
+if (weakPlusG3Mode)
+{
+    beamFunctions[2]->SetLineColor(kOrange + 7);
+    beamFunctions[3]->SetLineColor(kOrange + 7);
+}
+else
+{
+    beamFunctions[selectedGaussian]->SetLineColor(kOrange + 7);
+}
 
 // Draw all Gaussian components.
 for (int ibeam = 0; ibeam < nBeamPeaks; ++ibeam)
@@ -1432,10 +1535,21 @@ fBackground.Draw("SAME");
   fitBox->SetFillStyle(1001);
   fitBox->SetTextAlign(12);
   fitBox->SetTextSize(0.026);
-  fitBox->AddText(Form("Selected beam index: %d", selectedBeam));
-  fitBox->AddText(Form("Mean = %.5f", fittedMean));
-  fitBox->AddText(Form("Sigma = %.5f", fittedSigma));
-  fitBox->AddText(Form("Other/selected = %.1f%%", 100.0 * finalOtherFraction));
+  if (weakPlusG3Mode)
+{
+    fitBox->AddText("Selected beam group");
+    fitBox->AddText(Form("Weak mean = %.5f", beamMean[2]));
+    fitBox->AddText(Form("Right mean = %.5f", beamMean[3]));
+    fitBox->AddText(Form("Other/selected group = %.1f%%",
+                         100.0 * finalOtherFraction));           
+}
+else
+{
+    fitBox->AddText(Form("Selected beam index: %d", selectedBeam));
+    fitBox->AddText(Form("Mean = %.5f", fittedMean));
+    fitBox->AddText(Form("Sigma = %.5f", fittedSigma));
+    fitBox->AddText(Form("Other/selected = %.1f%%", 100.0 * finalOtherFraction));
+}
   fitBox->Draw("SAME");
 
   // Draw the final adaptive beam-selection limits
@@ -1447,8 +1561,8 @@ fBackground.Draw("SAME");
   lineMin->SetLineColor(kRed);
   lineMax->SetLineColor(kRed);
 
-  lineMin->SetLineStyle(2);
-  lineMax->SetLineStyle(2);
+  lineMin->SetLineStyle(2);             
+  lineMax->SetLineStyle(2);     
 
   lineMin->SetLineWidth(2);
   lineMax->SetLineWidth(2);
