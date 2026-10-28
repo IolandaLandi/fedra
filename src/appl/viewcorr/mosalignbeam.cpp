@@ -68,6 +68,14 @@ void set_default_link(TEnv &cenv)
   cenv.SetValue("fedra.mosalignbeam.DoAlignMicrotracksAngles.minbin", 20);
   cenv.SetValue("fedra.mosalignbeam.SelectWeakPlusG3", 0);
   cenv.SetValue("fedra.mosalignbeam.GroupMaxOtherBeamFraction", 0.05);
+  cenv.SetValue("fedra.mosalignbeam.TwoPeakMode", 0);
+  cenv.SetValue("fedra.mosalignbeam.TwoPeakMinTX", 0.15);
+  cenv.SetValue("fedra.mosalignbeam.TwoPeakMaxTX", 0.33);
+  cenv.SetValue("fedra.mosalignbeam.TwoPeakIndex", 1);   // 0 = left, 1 = right
+  cenv.SetValue("fedra.mosalignbeam.TwoPeakBins", 240);
+  cenv.SetValue("fedra.mosalignbeam.TwoPeakSpectrumSigma", 5.0);
+  cenv.SetValue("fedra.mosalignbeam.TwoPeakSpectrumThreshold", 0.05);
+  cenv.SetValue("fedra.mosalignbeam.TwoPeakMaxOtherBeamFraction", 0.20);
 
   cenv.SetValue("fedra.link.AFID", 1); // 1 is usually fine for scanned data; for the db-read data use 0!
   cenv.SetValue("fedra.link.DoImageCorr", 0);
@@ -234,6 +242,7 @@ void AlignToBeam(EdbID id, TEnv &cenv)
   int do_align_microtracks_angles = cenv.GetValue("fedra.mosalignbeam.DoAlignMicrotracksAngles", 1);
   int do_correct_shrinkage = cenv.GetValue("fedra.mosalignbeam.DoTuneShrinkage", 1);
   int do_full_linking = cenv.GetValue("fedra.mosalignbeam.DoFullLinking", 0);
+  int twoPeakMode = cenv.GetValue("fedra.mosalignbeam.TwoPeakMode", 0);
   mio.AddSegmentCut(1, cenv.GetValue("fedra.mosalignbeam.read.ICUT", "-1     0. 120000.   0.   120000.    -1.   1.      -1.   1.       0.  500."));
 
   EdbLayer *mapside1 = mio.GetCorrMap(id.ePlate, 1);
@@ -306,7 +315,10 @@ void AlignToBeam(EdbID id, TEnv &cenv)
           AlignMicrotracksAngles(*pp2, cenv); // locally align microtracks angles to beam
         }
         if (do_align_beam)
-        {
+        { 
+          if (twoPeakMode){
+              AlignFragmentToBeam0(*pp2, *pp1, *l2, *l1, 100);   
+          }   
           AlignFragmentToBeam0(*pp2, *pp1, *l2, *l1, 30);     // align 2 to 1 using parallel beam tracks
           AlignFragmentToBeam0(*pp2, *pp1, *l2, *l1, 10);      // align 2 to 1 using parallel beam tracks      
           AlignFragmentToBeam0(*pp2, *pp1, *l2, *l1, 3, -10); // align 2 to 1 using parallel beam tracks, assign flag -10 to used segments
@@ -475,6 +487,14 @@ void AlignMicrotracksAngles(EdbPattern &p, TEnv &env)
 {
   float bin = env.GetValue("fedra.mosalignbeam.DoAlignMicrotracksAngles.bin", 100.);
   int minbin = env.GetValue("fedra.mosalignbeam.DoAlignMicrotracksAngles.minbin", 20);
+  int twoPeakMode = env.GetValue("fedra.mosalignbeam.TwoPeakMode", 0);
+  float txHistMin = -0.1;
+  float txHistMax =  0.1;
+  if (twoPeakMode)
+     {
+     txHistMin = env.GetValue("fedra.mosalignbeam.TwoPeakMinTX", 0.15);
+     txHistMax = env.GetValue("fedra.mosalignbeam.TwoPeakMaxTX", 0.33);
+     }
   float xmin = p.Xmin();
   float xmax = p.Xmax();
   float ymin = p.Ymin();
@@ -495,14 +515,14 @@ void AlignMicrotracksAngles(EdbPattern &p, TEnv &env)
     Log(1, "mosalignbeam::AlignMicrotracksAngles", "fragment %d: too few microtracks, skip", p.ID());
     return;
   }
-  TH3F *htx = new TH3F(Form("htx_%d_%d", p.Side(), p.ID()), "htx", ibinX, xmin, xmax, ibinY, ymin, ymax, 100, -0.1, 0.1);
+  TH3F *htx = new TH3F(Form("htx_%d_%d", p.Side(), p.ID()), "htx", ibinX, xmin, xmax, ibinY, ymin, ymax, 100, txHistMin, txHistMax);
   TH3F *hty = new TH3F(Form("hty_%d_%d", p.Side(), p.ID()), "hty", ibinX, xmin, xmax, ibinY, ymin, ymax, 100, -0.1, 0.1);
   htx->SetDirectory(gROOT);
   hty->SetDirectory(gROOT);
   for (int i = 0; i < p.N(); i++)
   {
     EdbSegP *s = p.GetSegment(i);
-    if (s->TX() < -0.1 || s->TX() > 0.1 || s->TY() < -0.1 || s->TY() > 0.1)
+    if (s->TX() < txHistMin || s->TX() > txHistMax || s->TY() < -0.1 || s->TY() > 0.1)
       continue;
     htx->Fill(s->X(), s->Y(), s->TX());
     hty->Fill(s->X(), s->Y(), s->TY());
@@ -510,6 +530,22 @@ void AlignMicrotracksAngles(EdbPattern &p, TEnv &env)
 
   TH2D *h2_zmean = ProfileAndCleanTH3(htx, minbin);
   TH2D *h2_zmean_ty = ProfileAndCleanTH3(hty, minbin);
+  
+  double nMapBins = h2_zmean->GetNbinsX() * h2_zmean->GetNbinsY();
+
+  Log(1, "mosalignbeam::AlignMicrotracksAngles",
+    "fragment %d side %d: TX correction map mean=%.6f min=%.6f max=%.6f",
+    p.ID(), p.Side(),
+    h2_zmean->Integral() / nMapBins,
+    h2_zmean->GetMinimum(),
+    h2_zmean->GetMaximum());
+
+  Log(1, "mosalignbeam::AlignMicrotracksAngles",
+    "fragment %d side %d: TY correction map mean=%.6f min=%.6f max=%.6f",
+    p.ID(), p.Side(),
+    h2_zmean_ty->Integral() / nMapBins,
+    h2_zmean_ty->GetMinimum(),
+    h2_zmean_ty->GetMaximum());
 
   for (int i = 0; i < p.N(); i++)
   {
@@ -539,6 +575,7 @@ TH2D *ProfileAndCleanTH3(TH3 *h3, double min_entries)
 
   // Track total entries per (x,y) cell to identify sparse bins
   std::vector<std::vector<double>> cell_entries(nBinsX + 1, std::vector<double>(nBinsY + 1, 0.0));
+  int nValidCells = 0;
 
   // 2. Step 1: Calculate mean z for each (x, y) cell
   for (int ix = 1; ix <= nBinsX; ++ix)
@@ -574,6 +611,7 @@ TH2D *ProfileAndCleanTH3(TH3 *h3, double min_entries)
       if (sum_w >= min_entries)
       {
         h2_zmean->SetBinContent(ix, iy, sum_wz / sum_w);
+        nValidCells++;
       }
     }
   }
@@ -631,6 +669,13 @@ TH2D *ProfileAndCleanTH3(TH3 *h3, double min_entries)
     }
   }
 
+  Log(1, "mosalignbeam::ProfileAndCleanTH3", "%s: valid XY cells before interpolation = %d / %d (%.2f%%), minbin=%.0f",
+    h3->GetName(),
+    nValidCells,
+    nBinsX * nBinsY,
+    100.0 * nValidCells / (nBinsX * nBinsY),
+    min_entries);
+
   return h2_zmean;
 }
 
@@ -660,6 +705,691 @@ bool FindBeamWindowTX(EdbPattern &p,TEnv &env,float &txMin,float &txCenter,float
     double weakBeamMeanTolerance = env.GetValue("fedra.mosalignbeam.BeamWeakMeanTolerance", 0.005);
     int selectWeakPlusG3 = env.GetValue("fedra.mosalignbeam.SelectWeakPlusG3", 0);
     double groupMaxOtherBeamFraction = env.GetValue("fedra.mosalignbeam.GroupMaxOtherBeamFraction", 0.05);
+    int twoPeakMode = env.GetValue("fedra.mosalignbeam.TwoPeakMode", 0);
+    double twoPeakMinTX = env.GetValue("fedra.mosalignbeam.TwoPeakMinTX", 0.15);
+    double twoPeakMaxTX = env.GetValue("fedra.mosalignbeam.TwoPeakMaxTX", 0.33);
+    int twoPeakIndex = env.GetValue("fedra.mosalignbeam.TwoPeakIndex", 1);
+    int twoPeakBins = env.GetValue("fedra.mosalignbeam.TwoPeakBins", 240);
+    double twoPeakSpectrumSigma = env.GetValue("fedra.mosalignbeam.TwoPeakSpectrumSigma", 5.0);
+    double twoPeakSpectrumThreshold = env.GetValue("fedra.mosalignbeam.TwoPeakSpectrumThreshold", 0.05);
+    double twoPeakMaxOtherBeamFraction = env.GetValue("fedra.mosalignbeam.TwoPeakMaxOtherBeamFraction", 0.20);
+    
+
+// Optional two-peak mode for the two high-TX populations.
+// This branch is completely independent of the standard 4-beam
+// reconstruction. When TwoPeakMode = 0, the code below is skipped
+// and the standard FindBeamWindowTX algorithm is unchanged.
+if (twoPeakMode)
+{
+    if (twoPeakIndex < 0 || twoPeakIndex > 1)
+    {
+	Log(1, "FindBeamWindowTX",
+	    "fragment %d side %d: invalid TwoPeakIndex=%d "
+	    "(allowed: 0=left, 1=right)",
+	    p.ID(), p.Side(), twoPeakIndex);
+
+	txMin = twoPeakMinTX;
+	txCenter = 0.;
+	txMax = twoPeakMaxTX;
+	return false;
+    }
+
+    // --------------------------------------------------------------
+    // Build TX histogram only in the dedicated high-TX region.
+    // --------------------------------------------------------------
+
+    TH1F hTwoPeakTX(
+	Form("hTwoPeakTX_%d_%d", p.Side(), p.ID()),
+	"",
+	twoPeakBins,
+	twoPeakMinTX,
+	twoPeakMaxTX);
+
+    hTwoPeakTX.SetDirectory(nullptr);
+
+    for (int i = 0; i < p.N(); ++i)
+    {
+	EdbSegP *s = p.GetSegment(i);
+
+	if (std::abs(s->TY()) > 0.1)
+	    continue;
+
+	hTwoPeakTX.Fill(s->TX());
+    }
+
+    // Smoothing only for TSpectrum.
+    TH1F hTwoPeakTXSmooth(hTwoPeakTX);
+
+    hTwoPeakTXSmooth.SetName(
+	Form("hTwoPeakTXSmooth_%d_%d", p.Side(), p.ID()));
+
+    hTwoPeakTXSmooth.SetDirectory(nullptr);
+    hTwoPeakTXSmooth.Smooth(3);
+
+    TSpectrum spectrumTwo(4);
+
+    int nPeaksTwo =
+	spectrumTwo.Search(
+	    &hTwoPeakTXSmooth,
+	    twoPeakSpectrumSigma,
+	    "goff",
+	    twoPeakSpectrumThreshold);
+
+    double *xPeaksTwo =
+	spectrumTwo.GetPositionX();
+
+    std::vector<double> twoPeakPositions;
+
+    for (int i = 0; i < nPeaksTwo; ++i)
+    {
+	double x = xPeaksTwo[i];
+
+	if (x < twoPeakMinTX || x > twoPeakMaxTX)
+	    continue;
+
+	twoPeakPositions.push_back(x);
+    }
+
+    std::sort(
+	twoPeakPositions.begin(),
+	twoPeakPositions.end());
+
+    Log(1, "FindBeamWindowTX",
+	"fragment %d side %d: TwoPeakMode found %zu peaks "
+	"in TX range [%.3f, %.3f]",
+	p.ID(), p.Side(),
+	twoPeakPositions.size(),
+	twoPeakMinTX,
+	twoPeakMaxTX);
+
+    for (size_t i = 0;
+	 i < twoPeakPositions.size();
+	 ++i)
+    {
+	int bin =
+	    hTwoPeakTXSmooth.FindBin(
+	        twoPeakPositions[i]);
+
+	Log(1, "FindBeamWindowTX",
+	    "    high-TX peak %zu: TX=%.5f, height=%.0f",
+	    i + 1,
+	    twoPeakPositions[i],
+	    hTwoPeakTXSmooth.GetBinContent(bin));
+    }
+
+    // For this dedicated test require exactly two peaks.
+    if (twoPeakPositions.size() != 2)
+    {
+	Log(1, "FindBeamWindowTX",
+	    "fragment %d side %d: TwoPeakMode expected 2 peaks, "
+	    "found %zu",
+	    p.ID(), p.Side(),
+	    twoPeakPositions.size());
+
+	txMin = twoPeakMinTX;
+	txCenter = 0.;
+	txMax = twoPeakMaxTX;
+
+	return false;
+    }
+
+    // --------------------------------------------------------------
+    // Simultaneous fit:
+    //
+    //     G_left + G_right + common linear background
+    // --------------------------------------------------------------
+
+    double twoBinWidth =
+	hTwoPeakTX.GetBinWidth(1);
+
+    double twoHistMaximum =
+	hTwoPeakTX.GetMaximum();
+
+    double twoBackgroundInitial =
+	hTwoPeakTX.GetMinimum();
+
+    double peakSpacing =
+	twoPeakPositions[1] -
+	twoPeakPositions[0];
+
+    double midpoint =
+	0.5 *
+	(twoPeakPositions[0] +
+	 twoPeakPositions[1]);
+
+    TF1 fTwo(
+	Form("fTwoPeak_%d_%d",
+	     p.Side(), p.ID()),
+	"gaus(0)+gaus(3)+pol1(6)",
+	twoPeakMinTX,
+	twoPeakMaxTX);
+
+    double sigmaInitial =
+	std::max(
+	    2.0 * twoBinWidth,
+	    0.05 * peakSpacing);
+
+    double sigmaMax =
+	std::max(
+	    2.0 * twoBinWidth,
+	    0.20 * peakSpacing);
+
+    for (int ipeak = 0;
+	 ipeak < 2;
+	 ++ipeak)
+    {
+	int base = 3 * ipeak;
+
+	int peakBin =
+	    hTwoPeakTX.FindBin(
+	        twoPeakPositions[ipeak]);
+
+	double peakContent =
+	    hTwoPeakTX.GetBinContent(
+	        peakBin);
+
+	double amplitudeInitial =
+	    peakContent -
+	    twoBackgroundInitial;
+
+	if (amplitudeInitial <= 0.)
+	    amplitudeInitial = peakContent;
+
+	fTwo.SetParameter(
+	    base,
+	    amplitudeInitial);
+
+	fTwo.SetParameter(
+	    base + 1,
+	    twoPeakPositions[ipeak]);
+
+	fTwo.SetParameter(
+	    base + 2,
+	    sigmaInitial);
+
+	fTwo.SetParLimits(
+	    base,
+	    0.,
+	    10.0 * twoHistMaximum);
+
+	if (ipeak == 0)
+	{
+	    fTwo.SetParLimits(
+	        base + 1,
+	        twoPeakMinTX,
+	        midpoint);
+	}
+	else
+	{
+	    fTwo.SetParLimits(
+	        base + 1,
+	        midpoint,
+	        twoPeakMaxTX);
+	}
+
+	fTwo.SetParLimits(
+	    base + 2,
+	    0.5 * twoBinWidth,
+	    sigmaMax);
+    }
+
+    // Common linear background.
+    fTwo.SetParameter(
+	6,
+	twoBackgroundInitial);
+
+    fTwo.SetParameter(
+	7,
+	0.);
+
+    TFitResultPtr fitResultTwo =
+	hTwoPeakTX.Fit(
+	    &fTwo,
+	    "RQ0");
+
+    int fitStatusTwo =
+	(int)fitResultTwo;
+
+    if (fitStatusTwo != 0)
+    {
+	Log(1, "FindBeamWindowTX",
+	    "fragment %d side %d: "
+	    "TwoPeakMode fit failed, status=%d",
+	    p.ID(), p.Side(),
+	    fitStatusTwo);
+
+	// Safe midpoint fallback.
+	txCenter =
+	    twoPeakPositions[twoPeakIndex];
+
+	if (twoPeakIndex == 0)
+	{
+	    txMin = twoPeakMinTX;
+	    txMax = midpoint;
+	}
+	else
+	{
+	    txMin = midpoint;
+	    txMax = twoPeakMaxTX;
+	}
+
+	return false;
+    }
+
+    // Extract fitted parameters.
+    double twoAmplitude[2];
+    double twoMean[2];
+    double twoSigma[2];
+
+    for (int ipeak = 0;
+	 ipeak < 2;
+	 ++ipeak)
+    {
+	int base = 3 * ipeak;
+
+	twoAmplitude[ipeak] =
+	    fTwo.GetParameter(base);
+
+	twoMean[ipeak] =
+	    fTwo.GetParameter(base + 1);
+
+	twoSigma[ipeak] =
+	    std::abs(
+	        fTwo.GetParameter(base + 2));
+
+	if (!std::isfinite(twoAmplitude[ipeak]) ||
+	    twoAmplitude[ipeak] <= 0. ||
+	    !std::isfinite(twoMean[ipeak]) ||
+	    !std::isfinite(twoSigma[ipeak]) ||
+	    twoSigma[ipeak] <= 0.)
+	{
+	    Log(1, "FindBeamWindowTX",
+	        "fragment %d side %d: invalid fitted parameters "
+	        "for high-TX peak %d",
+	        p.ID(), p.Side(),
+	        ipeak);
+
+	    txMin = twoPeakMinTX;
+	    txCenter =
+	        twoPeakPositions[twoPeakIndex];
+	    txMax = twoPeakMaxTX;
+
+	    return false;
+	}
+    }
+
+    int otherTwoPeak =
+	1 - twoPeakIndex;
+
+    double fittedAmplitudeTwo =
+	twoAmplitude[twoPeakIndex];
+
+    double fittedMeanTwo =
+	twoMean[twoPeakIndex];
+
+    double fittedSigmaTwo =
+	twoSigma[twoPeakIndex];
+
+    txCenter =
+	fittedMeanTwo;
+
+    // Same philosophy as the standard single-beam selection:
+    // initial window = mu +/- 4 sigma
+    // adaptive reduction only if neighbouring-peak contamination
+    // exceeds the requested threshold.
+    double txMinInitialTwo =
+	std::max(
+	    fittedMeanTwo -
+	        4.0 * fittedSigmaTwo,
+	    twoPeakMinTX);
+
+    double txMaxInitialTwo =
+	std::min(
+	    fittedMeanTwo +
+	        4.0 * fittedSigmaTwo,
+	    twoPeakMaxTX);
+
+    txMin =
+	(float)txMinInitialTwo;
+
+    txMax =
+	(float)txMaxInitialTwo;
+
+    double currentOtherFractionTwo = 0.;
+    bool contaminationOKTwo = false;
+
+    for (int iter = 0;
+	 iter < 2 * twoPeakBins;
+	 ++iter)
+    {
+	double selectedArea =
+	    GaussianIntegral(
+	        fittedAmplitudeTwo,
+	        fittedMeanTwo,
+	        fittedSigmaTwo,
+	        txMin,
+	        txMax);
+
+	double otherArea =
+	    GaussianIntegral(
+	        twoAmplitude[otherTwoPeak],
+	        twoMean[otherTwoPeak],
+	        twoSigma[otherTwoPeak],
+	        txMin,
+	        txMax);
+
+	if (selectedArea <= 0.)
+	    break;
+
+	currentOtherFractionTwo =
+	    otherArea / selectedArea;
+
+	if (currentOtherFractionTwo <=
+	    twoPeakMaxOtherBeamFraction)
+	{
+	    contaminationOKTwo = true;
+	    break;
+	}
+
+	// The contaminating peak is always on only one side:
+	// for the right peak move the left edge,
+	// for the left peak move the right edge.
+	if (twoPeakIndex == 1)
+	{
+	    if (txMin + twoBinWidth >=
+	        fittedMeanTwo)
+	        break;
+
+	    txMin += twoBinWidth;
+	}
+	else
+	{
+	    if (txMax - twoBinWidth <=
+	        fittedMeanTwo)
+	        break;
+
+	    txMax -= twoBinWidth;
+	}
+    }
+
+    txMin =
+	std::max(
+	    txMin,
+	    (float)twoPeakMinTX);
+
+    txMax =
+	std::min(
+	    txMax,
+	    (float)twoPeakMaxTX);
+
+    double selectedEntriesTwo =
+	GaussianIntegral(
+	    fittedAmplitudeTwo,
+	    fittedMeanTwo,
+	    fittedSigmaTwo,
+	    txMin,
+	    txMax) /
+	twoBinWidth;
+
+    double otherEntriesTwo =
+	GaussianIntegral(
+	    twoAmplitude[otherTwoPeak],
+	    twoMean[otherTwoPeak],
+	    twoSigma[otherTwoPeak],
+	    txMin,
+	    txMax) /
+	twoBinWidth;
+
+    Log(1, "FindBeamWindowTX",
+	"fragment %d side %d: TwoPeakMode: "
+	"selected peak=%d, "
+	"mu=%.5f sigma=%.5f, "
+	"initial window=[%.5f, %.5f], "
+	"final window=[%.5f, %.5f], "
+	"selected=%.0f other=%.0f, "
+	"other/selected=%.2f%%",
+	p.ID(), p.Side(),
+	twoPeakIndex,
+	fittedMeanTwo,
+	fittedSigmaTwo,
+	txMinInitialTwo,
+	txMaxInitialTwo,
+	txMin,
+	txMax,
+	selectedEntriesTwo,
+	otherEntriesTwo,
+	100.0 * currentOtherFractionTwo);
+
+    if (!contaminationOKTwo)
+    {
+	Log(1, "FindBeamWindowTX",
+	    "fragment %d side %d: WARNING: "
+	    "TwoPeakMode could not reach the requested %.1f%% "
+	    "other-peak contamination",
+	    p.ID(), p.Side(),
+	    100.0 *
+	    twoPeakMaxOtherBeamFraction);
+    }
+
+    // --------------------------------------------------------------
+    // Diagnostic plot.
+    // --------------------------------------------------------------
+
+    gSystem->mkdir(
+	"beampeak_diagnostics",
+	kTRUE);
+
+    TCanvas *cTwo =
+	new TCanvas(
+	    Form("cTwoPeak_%d_%d",
+	         p.Side(), p.ID()),
+	    "High-TX two-peak selection",
+	    1000,
+	    700);
+
+    hTwoPeakTX.SetTitle(
+	Form("High-TX distribution - p%03d, side %d, fragment %d;"
+	     "TX;Microtracks",
+	     p.ScanID().ePlate,
+	     p.Side(),
+	     p.ID()));
+
+    hTwoPeakTX.SetStats(0);
+    hTwoPeakTX.SetLineWidth(2);
+    hTwoPeakTX.Draw("HIST");
+
+    fTwo.SetLineColor(kGreen + 2);
+    fTwo.SetLineWidth(2);
+    fTwo.Draw("SAME");
+
+    TF1 fTwoLeft(
+	Form("fTwoLeft_%d_%d",
+	     p.Side(), p.ID()),
+	"gaus(0)",
+	twoPeakMinTX,
+	twoPeakMaxTX);
+
+    TF1 fTwoRight(
+	Form("fTwoRight_%d_%d",
+	     p.Side(), p.ID()),
+	"gaus(0)",
+	twoPeakMinTX,
+	twoPeakMaxTX);
+
+    TF1 *twoFunctions[2] =
+    {
+	&fTwoLeft,
+	&fTwoRight
+    };
+
+    for (int ipeak = 0;
+	 ipeak < 2;
+	 ++ipeak)
+    {
+	twoFunctions[ipeak]->SetParameter(
+	    0,
+	    twoAmplitude[ipeak]);
+
+	twoFunctions[ipeak]->SetParameter(
+	    1,
+	    twoMean[ipeak]);
+
+	twoFunctions[ipeak]->SetParameter(
+	    2,
+	    twoSigma[ipeak]);
+
+	twoFunctions[ipeak]->SetLineColor(
+	    kGray + 1);
+
+	twoFunctions[ipeak]->SetLineStyle(2);
+	twoFunctions[ipeak]->SetLineWidth(2);
+    }
+
+    twoFunctions[twoPeakIndex]->
+	SetLineColor(kOrange + 7);
+
+    twoFunctions[0]->Draw("SAME");
+    twoFunctions[1]->Draw("SAME");
+
+    TF1 fTwoBackground(
+	Form("fTwoBackground_%d_%d",
+	     p.Side(), p.ID()),
+	"pol1(0)",
+	twoPeakMinTX,
+	twoPeakMaxTX);
+
+    fTwoBackground.SetParameter(
+	0,
+	fTwo.GetParameter(6));
+
+    fTwoBackground.SetParameter(
+	1,
+	fTwo.GetParameter(7));
+
+    fTwoBackground.SetLineColor(kGray + 2);
+    fTwoBackground.SetLineStyle(3);
+    fTwoBackground.SetLineWidth(2);
+    fTwoBackground.Draw("SAME");
+
+    double yTwoMax =
+	hTwoPeakTX.GetMaximum() * 1.25;
+
+    hTwoPeakTX.SetMaximum(yTwoMax);
+
+    TLine *lineTwoMin =
+	new TLine(
+	    txMin,
+	    0.,
+	    txMin,
+	    yTwoMax);
+
+    TLine *lineTwoMax =
+	new TLine(
+	    txMax,
+	    0.,
+	    txMax,
+	    yTwoMax);
+
+    lineTwoMin->SetLineColor(kRed);
+    lineTwoMax->SetLineColor(kRed);
+
+    lineTwoMin->SetLineStyle(2);
+    lineTwoMax->SetLineStyle(2);
+
+    lineTwoMin->SetLineWidth(2);
+    lineTwoMax->SetLineWidth(2);
+
+    lineTwoMin->Draw("SAME");
+    lineTwoMax->Draw("SAME");
+
+    TPaveText *fitBoxTwo =
+	new TPaveText(
+	    0.66, 0.69,
+	    0.91, 0.88,
+	    "NDC");
+
+    fitBoxTwo->SetBorderSize(1);
+    fitBoxTwo->SetFillStyle(1001);
+    fitBoxTwo->SetTextAlign(12);
+    fitBoxTwo->SetTextSize(0.026);
+
+    fitBoxTwo->AddText(
+	Form("Selected high-TX peak: %d",
+	     twoPeakIndex));
+
+    fitBoxTwo->AddText(
+	Form("Mean = %.5f",
+	     fittedMeanTwo));
+
+    fitBoxTwo->AddText(
+	Form("Sigma = %.5f",
+	     fittedSigmaTwo));
+
+    fitBoxTwo->AddText(
+	Form("Other/selected = %.2f%%",
+	     100.0 *
+	     currentOtherFractionTwo));
+
+    fitBoxTwo->Draw("SAME");
+
+    TLegend *legendTwo =
+	new TLegend(
+	    0.13, 0.65,
+	    0.48, 0.88);
+
+    legendTwo->SetBorderSize(0);
+    legendTwo->SetFillStyle(0);
+    legendTwo->SetTextSize(0.025);
+
+    legendTwo->AddEntry(
+	&hTwoPeakTX,
+	"Original TX",
+	"l");
+
+    legendTwo->AddEntry(
+	&fTwo,
+	"Total fit",
+	"l");
+
+    legendTwo->AddEntry(
+	twoFunctions[twoPeakIndex],
+	"Selected peak Gaussian",
+	"l");
+
+    legendTwo->AddEntry(
+	twoFunctions[otherTwoPeak],
+	"Other peak Gaussian",
+	"l");
+
+    legendTwo->AddEntry(
+	&fTwoBackground,
+	"Common linear background",
+	"l");
+
+    legendTwo->AddEntry(
+	lineTwoMin,
+	"Final beam-selection window",
+	"l");
+
+    legendTwo->Draw();
+
+    TString plotNameTwo;
+
+    plotNameTwo.Form(
+	"beampeak_diagnostics/"
+	"p%03d_frag%03d_side%d_twopeak.png",
+	p.ScanID().ePlate,
+	p.ID(),
+	p.Side());
+
+    cTwo->SaveAs(
+	plotNameTwo.Data());
+
+    delete cTwo;
+
+    return true;
+}
+
 
     TH1F hBeamTX("hBeamTX","",nBins,txMinSearch,txMaxSearch);         //Build the TX distribution in the selected search range
     hBeamTX.SetDirectory(nullptr);
