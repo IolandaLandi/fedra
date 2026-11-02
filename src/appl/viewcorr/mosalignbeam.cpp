@@ -839,116 +839,63 @@ if (twoPeakMode)
     //     G_left + G_right + common linear background
     // --------------------------------------------------------------
 
-    double twoBinWidth =
-	hTwoPeakTX.GetBinWidth(1);
+    double twoBinWidth = hTwoPeakTX.GetBinWidth(1);
 
-    double twoHistMaximum =
-	hTwoPeakTX.GetMaximum();
+    double twoHistMaximum = hTwoPeakTX.GetMaximum();
 
-    double twoBackgroundInitial =
-	hTwoPeakTX.GetMinimum();
+    double twoBackgroundInitial = hTwoPeakTX.GetMinimum();
 
-    double peakSpacing =
-	twoPeakPositions[1] -
-	twoPeakPositions[0];
+    double peakSpacing = twoPeakPositions[1] - twoPeakPositions[0];
 
-    double midpoint =
-	0.5 *
-	(twoPeakPositions[0] +
-	 twoPeakPositions[1]);
+    double midpoint = 0.5 * (twoPeakPositions[0] + twoPeakPositions[1]);
 
-    TF1 fTwo(
-	Form("fTwoPeak_%d_%d",
-	     p.Side(), p.ID()),
-	"gaus(0)+gaus(3)+pol1(6)",
-	twoPeakMinTX,
-	twoPeakMaxTX);
+    TF1 fTwo(Form("fTwoPeak_%d_%d", p.Side(), p.ID()), "gaus(0)+gaus(3)+pol1(6)", twoPeakMinTX, twoPeakMaxTX);
 
-    double sigmaInitial =
-	std::max(
-	    2.0 * twoBinWidth,
-	    0.05 * peakSpacing);
+    double sigmaInitial = std::max(2.0 * twoBinWidth, 0.05 * peakSpacing);
 
-    double sigmaMax =
-	std::max(
-	    2.0 * twoBinWidth,
-	    0.20 * peakSpacing);
+    double sigmaMax = std::max(2.0 * twoBinWidth, 0.20 * peakSpacing);
 
-    for (int ipeak = 0;
-	 ipeak < 2;
-	 ++ipeak)
+    for (int ipeak = 0; ipeak < 2; ++ipeak)
     {
 	int base = 3 * ipeak;
 
-	int peakBin =
-	    hTwoPeakTX.FindBin(
-	        twoPeakPositions[ipeak]);
+	int peakBin = hTwoPeakTX.FindBin(twoPeakPositions[ipeak]);
 
-	double peakContent =
-	    hTwoPeakTX.GetBinContent(
-	        peakBin);
+	double peakContent = hTwoPeakTX.GetBinContent(peakBin);
 
-	double amplitudeInitial =
-	    peakContent -
-	    twoBackgroundInitial;
+	double amplitudeInitial = peakContent - twoBackgroundInitial;
 
 	if (amplitudeInitial <= 0.)
 	    amplitudeInitial = peakContent;
 
-	fTwo.SetParameter(
-	    base,
-	    amplitudeInitial);
+	fTwo.SetParameter(base, amplitudeInitial);
 
-	fTwo.SetParameter(
-	    base + 1,
-	    twoPeakPositions[ipeak]);
+	fTwo.SetParameter(base + 1, twoPeakPositions[ipeak]);
 
-	fTwo.SetParameter(
-	    base + 2,
-	    sigmaInitial);
+	fTwo.SetParameter(base + 2, sigmaInitial);
 
-	fTwo.SetParLimits(
-	    base,
-	    0.,
-	    10.0 * twoHistMaximum);
+	fTwo.SetParLimits(base, 0., 10.0 * twoHistMaximum);
 
 	if (ipeak == 0)
 	{
-	    fTwo.SetParLimits(
-	        base + 1,
-	        twoPeakMinTX,
-	        midpoint);
+	    fTwo.SetParLimits(base + 1, twoPeakMinTX, midpoint);
 	}
 	else
 	{
-	    fTwo.SetParLimits(
-	        base + 1,
-	        midpoint,
-	        twoPeakMaxTX);
+	    fTwo.SetParLimits(base + 1, midpoint, twoPeakMaxTX);
 	}
 
-	fTwo.SetParLimits(
-	    base + 2,
-	    0.5 * twoBinWidth,
-	    sigmaMax);
+	fTwo.SetParLimits(base + 2, 0.5 * twoBinWidth, sigmaMax);
     }
 
     // Common linear background.
-    fTwo.SetParameter(
-	6,
-	twoBackgroundInitial);
+    fTwo.SetParameter(6, twoBackgroundInitial);
 
-    fTwo.SetParameter(
-	7,
-	0.);
+    fTwo.SetParameter(7, 0.);
 
-    TFitResultPtr fitResultTwo =
-	hTwoPeakTX.Fit(
-	    &fTwo,
-	    "RQ0");
+    TFitResultPtr fitResultTwo = hTwoPeakTX.Fit(&fTwo, "RQ0");
 
-    int fitStatusTwo =
-	(int)fitResultTwo;
+    int fitStatusTwo = (int)fitResultTwo;
 
     if (fitStatusTwo != 0)
     {
@@ -959,8 +906,7 @@ if (twoPeakMode)
 	    fitStatusTwo);
 
 	// Safe midpoint fallback.
-	txCenter =
-	    twoPeakPositions[twoPeakIndex];
+	txCenter = twoPeakPositions[twoPeakIndex];
 
 	if (twoPeakIndex == 0)
 	{
@@ -987,15 +933,11 @@ if (twoPeakMode)
     {
 	int base = 3 * ipeak;
 
-	twoAmplitude[ipeak] =
-	    fTwo.GetParameter(base);
+	twoAmplitude[ipeak] = fTwo.GetParameter(base);
 
-	twoMean[ipeak] =
-	    fTwo.GetParameter(base + 1);
+	twoMean[ipeak] = fTwo.GetParameter(base + 1);
 
-	twoSigma[ipeak] =
-	    std::abs(
-	        fTwo.GetParameter(base + 2));
+	twoSigma[ipeak] = std::abs(fTwo.GetParameter(base + 2));
 
 	if (!std::isfinite(twoAmplitude[ipeak]) ||
 	    twoAmplitude[ipeak] <= 0. ||
@@ -1010,82 +952,50 @@ if (twoPeakMode)
 	        ipeak);
 
 	    txMin = twoPeakMinTX;
-	    txCenter =
-	        twoPeakPositions[twoPeakIndex];
+	    txCenter = twoPeakPositions[twoPeakIndex];
 	    txMax = twoPeakMaxTX;
 
 	    return false;
 	}
     }
 
-    int otherTwoPeak =
-	1 - twoPeakIndex;
+    int otherTwoPeak = 1 - twoPeakIndex;
 
-    double fittedAmplitudeTwo =
-	twoAmplitude[twoPeakIndex];
+    double fittedAmplitudeTwo = twoAmplitude[twoPeakIndex];
 
-    double fittedMeanTwo =
-	twoMean[twoPeakIndex];
+    double fittedMeanTwo = twoMean[twoPeakIndex];
 
-    double fittedSigmaTwo =
-	twoSigma[twoPeakIndex];
+    double fittedSigmaTwo = twoSigma[twoPeakIndex];
 
-    txCenter =
-	fittedMeanTwo;
+    txCenter = fittedMeanTwo;
 
     // Same philosophy as the standard single-beam selection:
     // initial window = mu +/- 4 sigma
     // adaptive reduction only if neighbouring-peak contamination
     // exceeds the requested threshold.
-    double txMinInitialTwo =
-	std::max(
-	    fittedMeanTwo -
-	        4.0 * fittedSigmaTwo,
-	    twoPeakMinTX);
+    double txMinInitialTwo = std::max(fittedMeanTwo - 4.0 * fittedSigmaTwo, twoPeakMinTX);
 
-    double txMaxInitialTwo =
-	std::min(
-	    fittedMeanTwo +
-	        4.0 * fittedSigmaTwo,
-	    twoPeakMaxTX);
+    double txMaxInitialTwo = std::min(fittedMeanTwo + 4.0 * fittedSigmaTwo, twoPeakMaxTX);
 
-    txMin =
-	(float)txMinInitialTwo;
+    txMin = (float)txMinInitialTwo;
 
-    txMax =
-	(float)txMaxInitialTwo;
+    txMax = (float)txMaxInitialTwo;
 
     double currentOtherFractionTwo = 0.;
     bool contaminationOKTwo = false;
 
-    for (int iter = 0;
-	 iter < 2 * twoPeakBins;
-	 ++iter)
+    for (int iter = 0; iter < 2 * twoPeakBins; ++iter)
     {
-	double selectedArea =
-	    GaussianIntegral(
-	        fittedAmplitudeTwo,
-	        fittedMeanTwo,
-	        fittedSigmaTwo,
-	        txMin,
-	        txMax);
+	double selectedArea = GaussianIntegral(fittedAmplitudeTwo, fittedMeanTwo, fittedSigmaTwo, txMin, txMax);
 
-	double otherArea =
-	    GaussianIntegral(
-	        twoAmplitude[otherTwoPeak],
-	        twoMean[otherTwoPeak],
-	        twoSigma[otherTwoPeak],
-	        txMin,
-	        txMax);
+	double otherArea = GaussianIntegral(twoAmplitude[otherTwoPeak], twoMean[otherTwoPeak], twoSigma[otherTwoPeak], txMin, txMax);
 
 	if (selectedArea <= 0.)
 	    break;
 
-	currentOtherFractionTwo =
-	    otherArea / selectedArea;
+	currentOtherFractionTwo = otherArea / selectedArea;
 
-	if (currentOtherFractionTwo <=
-	    twoPeakMaxOtherBeamFraction)
+	if (currentOtherFractionTwo <= twoPeakMaxOtherBeamFraction)
 	{
 	    contaminationOKTwo = true;
 	    break;
@@ -1096,49 +1006,27 @@ if (twoPeakMode)
 	// for the left peak move the right edge.
 	if (twoPeakIndex == 1)
 	{
-	    if (txMin + twoBinWidth >=
-	        fittedMeanTwo)
+	    if (txMin + twoBinWidth >= fittedMeanTwo)
 	        break;
 
 	    txMin += twoBinWidth;
 	}
 	else
 	{
-	    if (txMax - twoBinWidth <=
-	        fittedMeanTwo)
+	    if (txMax - twoBinWidth <= fittedMeanTwo)
 	        break;
 
 	    txMax -= twoBinWidth;
 	}
     }
 
-    txMin =
-	std::max(
-	    txMin,
-	    (float)twoPeakMinTX);
+    txMin = std::max(txMin, (float)twoPeakMinTX);
 
-    txMax =
-	std::min(
-	    txMax,
-	    (float)twoPeakMaxTX);
+    txMax = std::min(txMax, (float)twoPeakMaxTX);
 
-    double selectedEntriesTwo =
-	GaussianIntegral(
-	    fittedAmplitudeTwo,
-	    fittedMeanTwo,
-	    fittedSigmaTwo,
-	    txMin,
-	    txMax) /
-	twoBinWidth;
+    double selectedEntriesTwo = GaussianIntegral(fittedAmplitudeTwo, fittedMeanTwo, fittedSigmaTwo, txMin, txMax) / twoBinWidth;
 
-    double otherEntriesTwo =
-	GaussianIntegral(
-	    twoAmplitude[otherTwoPeak],
-	    twoMean[otherTwoPeak],
-	    twoSigma[otherTwoPeak],
-	    txMin,
-	    txMax) /
-	twoBinWidth;
+    double otherEntriesTwo = GaussianIntegral(twoAmplitude[otherTwoPeak], twoMean[otherTwoPeak], twoSigma[otherTwoPeak], txMin, txMax) / twoBinWidth;
 
     Log(1, "FindBeamWindowTX",
 	"fragment %d side %d: TwoPeakMode: "
@@ -1175,17 +1063,9 @@ if (twoPeakMode)
     // Diagnostic plot.
     // --------------------------------------------------------------
 
-    gSystem->mkdir(
-	"beampeak_diagnostics",
-	kTRUE);
+    gSystem->mkdir("beampeak_diagnostics", kTRUE);
 
-    TCanvas *cTwo =
-	new TCanvas(
-	    Form("cTwoPeak_%d_%d",
-	         p.Side(), p.ID()),
-	    "High-TX two-peak selection",
-	    1000,
-	    700);
+    TCanvas *cTwo = new TCanvas(Form("cTwoPeak_%d_%d", p.Side(), p.ID()), "High-TX two-peak selection", 1000, 700);
 
     hTwoPeakTX.SetTitle(
 	Form("High-TX distribution - p%03d, side %d, fragment %d;"
@@ -1226,20 +1106,13 @@ if (twoPeakMode)
 	 ipeak < 2;
 	 ++ipeak)
     {
-	twoFunctions[ipeak]->SetParameter(
-	    0,
-	    twoAmplitude[ipeak]);
+	twoFunctions[ipeak]->SetParameter(0, twoAmplitude[ipeak]);
 
-	twoFunctions[ipeak]->SetParameter(
-	    1,
-	    twoMean[ipeak]);
+	twoFunctions[ipeak]->SetParameter(1, twoMean[ipeak]);
 
-	twoFunctions[ipeak]->SetParameter(
-	    2,
-	    twoSigma[ipeak]);
+	twoFunctions[ipeak]->SetParameter(2, twoSigma[ipeak]);
 
-	twoFunctions[ipeak]->SetLineColor(
-	    kGray + 1);
+	twoFunctions[ipeak]->SetLineColor(kGray + 1);
 
 	twoFunctions[ipeak]->SetLineStyle(2);
 	twoFunctions[ipeak]->SetLineWidth(2);
@@ -1258,13 +1131,9 @@ if (twoPeakMode)
 	twoPeakMinTX,
 	twoPeakMaxTX);
 
-    fTwoBackground.SetParameter(
-	0,
-	fTwo.GetParameter(6));
+    fTwoBackground.SetParameter(0, fTwo.GetParameter(6));
 
-    fTwoBackground.SetParameter(
-	1,
-	fTwo.GetParameter(7));
+    fTwoBackground.SetParameter(1, fTwo.GetParameter(7));
 
     fTwoBackground.SetLineColor(kGray + 2);
     fTwoBackground.SetLineStyle(3);
@@ -1276,19 +1145,8 @@ if (twoPeakMode)
 
     hTwoPeakTX.SetMaximum(yTwoMax);
 
-    TLine *lineTwoMin =
-	new TLine(
-	    txMin,
-	    0.,
-	    txMin,
-	    yTwoMax);
-
-    TLine *lineTwoMax =
-	new TLine(
-	    txMax,
-	    0.,
-	    txMax,
-	    yTwoMax);
+    TLine *lineTwoMin = new TLine(txMin, 0., txMin, yTwoMax);
+    TLine *lineTwoMax = new TLine(txMax, 0., txMax, yTwoMax);
 
     lineTwoMin->SetLineColor(kRed);
     lineTwoMax->SetLineColor(kRed);
@@ -1302,88 +1160,40 @@ if (twoPeakMode)
     lineTwoMin->Draw("SAME");
     lineTwoMax->Draw("SAME");
 
-    TPaveText *fitBoxTwo =
-	new TPaveText(
-	    0.66, 0.69,
-	    0.91, 0.88,
-	    "NDC");
+    TPaveText *fitBoxTwo = new TPaveText(0.66, 0.69, 0.91, 0.88, "NDC");
 
     fitBoxTwo->SetBorderSize(1);
     fitBoxTwo->SetFillStyle(1001);
     fitBoxTwo->SetTextAlign(12);
     fitBoxTwo->SetTextSize(0.026);
 
-    fitBoxTwo->AddText(
-	Form("Selected high-TX peak: %d",
-	     twoPeakIndex));
-
-    fitBoxTwo->AddText(
-	Form("Mean = %.5f",
-	     fittedMeanTwo));
-
-    fitBoxTwo->AddText(
-	Form("Sigma = %.5f",
-	     fittedSigmaTwo));
-
-    fitBoxTwo->AddText(
-	Form("Other/selected = %.2f%%",
-	     100.0 *
-	     currentOtherFractionTwo));
+    fitBoxTwo->AddText(Form("Selected high-TX peak: %d", twoPeakIndex));
+    fitBoxTwo->AddText(Form("Mean = %.5f", fittedMeanTwo));
+    fitBoxTwo->AddText(Form("Sigma = %.5f", fittedSigmaTwo));
+    fitBoxTwo->AddText(Form("Other/selected = %.2f%%", 100.0 * currentOtherFractionTwo));
 
     fitBoxTwo->Draw("SAME");
 
-    TLegend *legendTwo =
-	new TLegend(
-	    0.13, 0.65,
-	    0.48, 0.88);
+    TLegend *legendTwo = new TLegend(0.13, 0.65, 0.48, 0.88);
 
     legendTwo->SetBorderSize(0);
     legendTwo->SetFillStyle(0);
     legendTwo->SetTextSize(0.025);
 
-    legendTwo->AddEntry(
-	&hTwoPeakTX,
-	"Original TX",
-	"l");
-
-    legendTwo->AddEntry(
-	&fTwo,
-	"Total fit",
-	"l");
-
-    legendTwo->AddEntry(
-	twoFunctions[twoPeakIndex],
-	"Selected peak Gaussian",
-	"l");
-
-    legendTwo->AddEntry(
-	twoFunctions[otherTwoPeak],
-	"Other peak Gaussian",
-	"l");
-
-    legendTwo->AddEntry(
-	&fTwoBackground,
-	"Common linear background",
-	"l");
-
-    legendTwo->AddEntry(
-	lineTwoMin,
-	"Final beam-selection window",
-	"l");
+    legendTwo->AddEntry(&hTwoPeakTX, "Original TX", "l");
+    legendTwo->AddEntry(&fTwo, "Total fit", "l");
+    legendTwo->AddEntry(twoFunctions[twoPeakIndex], "Selected peak Gaussian", "l");
+    legendTwo->AddEntry(twoFunctions[otherTwoPeak], "Other peak Gaussian", "l");
+    legendTwo->AddEntry(&fTwoBackground, "Common linear background", "l");
+    legendTwo->AddEntry(lineTwoMin, "Final beam-selection window", "l");
 
     legendTwo->Draw();
 
     TString plotNameTwo;
 
-    plotNameTwo.Form(
-	"beampeak_diagnostics/"
-	"p%03d_frag%03d_side%d_twopeak.png",
-	p.ScanID().ePlate,
-	p.ID(),
-	p.Side());
+    plotNameTwo.Form("beampeak_diagnostics/p%03d_frag%03d_side%d_twopeak.png", p.ScanID().ePlate, p.ID(), p.Side());
 
-    cTwo->SaveAs(
-	plotNameTwo.Data());
+    cTwo->SaveAs(plotNameTwo.Data());
 
     delete cTwo;
 
@@ -1396,7 +1206,7 @@ if (twoPeakMode)
 
     for(int i=0;i<p.N();i++)
     {
-    	if (std::abs(p.GetSegment(i)->TY())>0.1)
+    	if (std::abs(p.GetSegment(i)->TY())>0.04)   
     	    continue;
         hBeamTX.Fill(p.GetSegment(i)->TX());
     }
@@ -1473,16 +1283,21 @@ if (twoPeakMode)
         return false;
     }
 
-    // Mapping from the physical beam index to the three robust TSpectrum peaks.
-    // selectedBeam 0 -> peakPositions[0]
-    // selectedBeam 1 -> peakPositions[1]
-    // selectedBeam 2 -> weak beam: no direct TSpectrum peak
-    // selectedBeam 3 -> peakPositions[2]
+    // Mapping from physical beam index to TSpectrum peaks.
+    // With 3 peaks: G2 is unresolved and is reconstructed between G1 and G3.
+    // With 4 peaks: all four physical beams are directly resolved by TSpectrum.
     int selectedPeak = -1;
 
-    if (selectedBeam == 0) selectedPeak = 0;
-    else if (selectedBeam == 1) selectedPeak = 1;
-    else if (selectedBeam == 3) selectedPeak = 2;
+    if (peakPositions.size() == 3)
+    {
+        if (selectedBeam == 0) selectedPeak = 0;
+        else if (selectedBeam == 1) selectedPeak = 1;
+        else if (selectedBeam == 3) selectedPeak = 2;
+    }
+    else if (peakPositions.size() == 4)
+    {
+        selectedPeak = selectedBeam;
+    }
 
     // For robust beams, check that the corresponding TSpectrum peak exists.
     // No such check is needed here for the weak beam.
@@ -1502,68 +1317,52 @@ if (twoPeakMode)
     return false;
 }
     
-    // TSpectrum must find exactly three robust peaks
-    // The fourth weak beam is introduced explicitly in the fit model
-  if (peakPositions.size() != 3)
-  {
-      Log(1, "FindBeamWindowTX", "fragment %d side %d: expected 3 TX peaks, found %zu", p.ID(), p.Side(), peakPositions.size());
-
-      // ----------------------------------------------------------
-    // ROBUST BEAMS:
-    // keep exactly the same midpoint fallback used previously.
-    // ----------------------------------------------------------
-    if (selectedBeam != 2)
+    // Standard reconstruction can handle either:
+    //   3 TSpectrum peaks: G2 is unresolved and its seed is reconstructed;
+    //   4 TSpectrum peaks: all four physical beams are directly resolved.
+    if (peakPositions.size() != 3 && peakPositions.size() != 4)
     {
-        double peakCandidate =
-            peakPositions[selectedPeak];
+        Log(1, "FindBeamWindowTX", "fragment %d side %d: expected 3 or 4 TX peaks, found %zu", p.ID(), p.Side(), peakPositions.size());
 
-        txCenter = peakCandidate;
+        if (selectedPeak >= 0 && selectedPeak < (int)peakPositions.size())
+        {
+            double peakCandidateFallback = peakPositions[selectedPeak];
+            txCenter = peakCandidateFallback;
+            txMin = (selectedPeak > 0) ? 0.5 * (peakPositions[selectedPeak - 1] + peakCandidateFallback) : txMinSearch;
+            txMax = (selectedPeak + 1 < (int)peakPositions.size()) ? 0.5 * (peakCandidateFallback + peakPositions[selectedPeak + 1]) : txMaxSearch;
+        }
+        else
+        {
+            txMin = txMinSearch;
+            txCenter = 0.;
+            txMax = txMaxSearch;
+        }
 
-        txMin =
-            (selectedPeak > 0)
-            ? 0.5 * (peakPositions[selectedPeak - 1] +
-                     peakCandidate)
-            : txMinSearch;
+        return false;
+    }
+    
+    
+    double beamSeedMean[4];
 
-        txMax =
-            (selectedPeak + 1 < (int)peakPositions.size())
-            ? 0.5 * (peakCandidate +
-                     peakPositions[selectedPeak + 1])
-            : txMaxSearch;
+    if (peakPositions.size() == 3)
+    {
+        beamSeedMean[0] = peakPositions[0];
+        beamSeedMean[1] = peakPositions[1];
+        beamSeedMean[2] = peakPositions[2] - weakBeamDeltaTX;   //If TSpectrum finds only 3 peaks G2 is the weak beam located before the last robust peak.
+        beamSeedMean[3] = peakPositions[2];
     }
     else
     {
-        // The weak beam is not directly defined by a TSpectrum peak.
-        // Its selection requires the standard 3-robust-peak configuration.
-        Log(1, "FindBeamWindowTX",
-            "fragment %d side %d: weak-beam selection requires "
-            "the 3 robust TSpectrum peaks",
-            p.ID(), p.Side());
-
-        txMin = txMinSearch;
-        txCenter = 0.;
-        txMax = txMaxSearch;
+        beamSeedMean[0] = peakPositions[0];
+        beamSeedMean[1] = peakPositions[1];
+        beamSeedMean[2] = peakPositions[2];
+        beamSeedMean[3] = peakPositions[3];
     }
-      return false;
-  }
-    
-// Initial positions of the four physical beam populations.
-// TSpectrum finds the three robust peaks:
-//   G0 <- peakPositions[0]
-//   G1 <- peakPositions[1]
-//   G3 <- peakPositions[2]
-// G2 is the weak beam located before the last robust peak.
-double beamSeedMean[4];
-
-beamSeedMean[0] = peakPositions[0];
-beamSeedMean[1] = peakPositions[1];
-beamSeedMean[2] = peakPositions[2] - weakBeamDeltaTX;
-beamSeedMean[3] = peakPositions[2];
 
 // Candidate position corresponding to the selected physical beam.
 // For robust beams this is exactly the same TSpectrum peak used before.
 // For G2 it is the expected weak-beam seed.
-double peakCandidate = (selectedBeam == 2) ? beamSeedMean[2] : peakPositions[selectedPeak];
+double peakCandidate = beamSeedMean[selectedBeam];
 
 // The weak-beam seed must lie between the second and the last
 // robust TSpectrum peaks.
@@ -1595,13 +1394,10 @@ int selectedGaussian = selectedBeam;
 bool weakPlusG3Mode = (selectedBeam == 2 && selectWeakPlusG3 != 0);
 
 
-Log(1, "FindBeamWindowTX",
-    "fragment %d side %d: weak-beam seed TX=%.5f "
-    "(last robust peak %.5f - delta %.5f)",
-    p.ID(), p.Side(),
-    beamSeedMean[2],
-    peakPositions[2],
-    weakBeamDeltaTX); 
+if (peakPositions.size() == 3)
+    Log(1, "FindBeamWindowTX", "fragment %d side %d: weak-beam seed TX=%.5f (last robust peak %.5f - delta %.5f)", p.ID(), p.Side(), beamSeedMean[2], peakPositions[2], weakBeamDeltaTX);
+else
+    Log(1, "FindBeamWindowTX", "fragment %d side %d: all four beam seeds directly resolved by TSpectrum: G0=%.5f G1=%.5f G2=%.5f G3=%.5f", p.ID(), p.Side(), beamSeedMean[0], beamSeedMean[1], beamSeedMean[2], beamSeedMean[3]);
     
 // Simultaneous fit of the four physical beam populations with one common linear background: G0(TX) + G1(TX) + G2(TX) + G3(TX) + p0 + p1*TX, G2 is the weak beam not resolved by TSpectrum.
 const int nBeamPeaks = 4;
@@ -1639,78 +1435,51 @@ for (int ibeam = 0; ibeam < nBeamPeaks; ++ibeam)
         amplitudeInitial = peakContent;
 
 
-    // --------------------------------------------------------------
     // Allowed mean range.
     // Midpoints between neighbouring physical beam seeds prevent
     // the Gaussian components from exchanging places.
-    // --------------------------------------------------------------
-
     double meanMin = txMinSearch;
     double meanMax = txMaxSearch;
 
     if (ibeam > 0)
     {
-        meanMin =
-            0.5 * (beamSeedMean[ibeam - 1] +
-                   beamSeedMean[ibeam]);
+        meanMin = 0.5 * (beamSeedMean[ibeam - 1] + beamSeedMean[ibeam]);
     }
 
     if (ibeam < nBeamPeaks - 1)
     {
-        meanMax =
-            0.5 * (beamSeedMean[ibeam] +
-                   beamSeedMean[ibeam + 1]);
+        meanMax = 0.5 * (beamSeedMean[ibeam] + beamSeedMean[ibeam + 1]);
     }
 
 
     // Additional constraint for the weak beam around
     // its physically expected position.
-    if (ibeam == 2)
+    if (ibeam == 2 && peakPositions.size() == 3)
     {
-        meanMin =
-            std::max(
-                meanMin,
-                beamSeedMean[2] - weakBeamMeanTolerance);
-
-        meanMax =
-            std::min(
-                meanMax,
-                beamSeedMean[2] + weakBeamMeanTolerance);
+        meanMin = std::max(meanMin, beamSeedMean[2] - weakBeamMeanTolerance);
+        meanMax = std::min(meanMax, beamSeedMean[2] + weakBeamMeanTolerance);
     }
 
 
-    // --------------------------------------------------------------
     // Initial sigma from the distance to the closest physical beam.
-    // --------------------------------------------------------------
-
     double leftSpacing;
     double rightSpacing;
 
     if (ibeam > 0)
-        leftSpacing =
-            beamSeedMean[ibeam] -
-            beamSeedMean[ibeam - 1];
+        leftSpacing = beamSeedMean[ibeam] - beamSeedMean[ibeam - 1];
     else
-        leftSpacing =
-            beamSeedMean[1] -
-            beamSeedMean[0];
+        leftSpacing = beamSeedMean[1] - beamSeedMean[0];
 
 
     if (ibeam < nBeamPeaks - 1)
-        rightSpacing =
-            beamSeedMean[ibeam + 1] -
-            beamSeedMean[ibeam];
+        rightSpacing = beamSeedMean[ibeam + 1] - beamSeedMean[ibeam];
     else
-        rightSpacing =
-            beamSeedMean[3] -
-            beamSeedMean[2];
+        rightSpacing = beamSeedMean[3] - beamSeedMean[2];
 
 
-    double nearestSpacing =
-        std::min(leftSpacing, rightSpacing);
+    double nearestSpacing = std::min(leftSpacing, rightSpacing);
 
-    double sigmaInitial =
-        0.15 * nearestSpacing;
+    double sigmaInitial = 0.15 * nearestSpacing;
 
     if (sigmaInitial < 2.0 * binWidth)
         sigmaInitial = 2.0 * binWidth;
@@ -1772,7 +1541,7 @@ if (fitStatus != 0)
         txCenter = peakCandidate;
 
         txMin = (selectedPeak > 0) ? 0.5 * (peakPositions[selectedPeak - 1] + peakCandidate) : txMinSearch;
-        txMax = (selectedPeak < 2) ? 0.5 * (peakCandidate + peakPositions[selectedPeak + 1]) : txMaxSearch;
+        txMax = (selectedPeak + 1 < (int)peakPositions.size()) ? 0.5 * (peakCandidate + peakPositions[selectedPeak + 1]) : txMaxSearch;
     }
 
     return false;
@@ -1813,8 +1582,7 @@ for (int ibeam = 0; ibeam < nBeamPeaks; ++ibeam)
            txCenter = peakCandidate;
 
            txMin = (selectedPeak > 0) ? 0.5 * (peakPositions[selectedPeak - 1] + peakCandidate) : txMinSearch;
-
-           txMax = (selectedPeak < 2) ? 0.5 * (peakCandidate + peakPositions[selectedPeak + 1]) : txMaxSearch;
+           txMax = (selectedPeak + 1 < (int)peakPositions.size()) ? 0.5 * (peakCandidate + peakPositions[selectedPeak + 1]) : txMaxSearch;
         }
         return false;
     }
@@ -2335,8 +2103,8 @@ legend->Draw();
 
 EdbPattern *ExtractBeamWindow(EdbPattern &p,float txMin,float txMax)
 {
-    float min[5]={-1.e10,-1.e10,txMin,-0.1,-1.e10};   //X, Y, TX, TY, W                 
-    float max[5]={ 1.e10, 1.e10,txMax, 0.1, 1.e10};
+    float min[5]={-1.e10,-1.e10,txMin,-0.04,-1.e10};   //X, Y, TX, TY, W                 
+    float max[5]={ 1.e10, 1.e10,txMax, 0.04, 1.e10};
 
     return p.ExtractSubPattern(min,max);
 }
