@@ -851,8 +851,11 @@ for (int i = 0; i < npl; ++i) {
   int cont = 0;
 
   bool firstPointInserted = false;   //bool per identificare il primo punto inserito in eG          
+  
+  //const int minCellLength = 3;
 
   for(int i=0;i<npl;i++)    
+  //for(int i = minCellLength; i<npl; i++)    
     {
       if(nentr[i]>eMinEntr)     
     {
@@ -942,15 +945,16 @@ if(cont==1)return -98;
   //eF1 = MCSCoordErrorFunction("eF1",tmean,X0);                   
   eF1 = MCSCoordErrorFunction("eF1");    
   eF1->SetParLimits(0,0.0,100);          
-  eF1->SetParameter(0,5);                             // starting value for momentum in GeV
+  eF1->SetParameter(0,5);                             // starting value for momentum in GeV      
   eF1->SetParameter(1, TMath::Sqrt(6) * sigma_res);                              // starting value for coordinate error        eF1->SetParameter(1, TMath::Sqrt(6) * 0.15);     
 
-  eF1->FixParameter(1, TMath::Sqrt(6) * sigma_res);                                 //HO AGGIUNTO SQRT(6) AL PARAMETRO DI RISOLUZIONE IN POSIZIONE!!!!!!!      eF1->FixParameter(1, TMath::Sqrt(6) * 0.15);             
-  //eF1->SetParLimits(1, TMath::Sqrt(6)*0.5*sigma_res, TMath::Sqrt(6)*1.5*sigma_res);                                                                                          
-    
+  eF1->FixParameter(1, TMath::Sqrt(6) * sigma_res);                                 //HO AGGIUNTO SQRT(6) AL PARAMETRO DI RISOLUZIONE IN POSIZIONE!!!!!!!    eF1->FixParameter(1, TMath::Sqrt(6) * 0.15);             
+  //eF1->SetParLimits(1, TMath::Sqrt(6)*0.5*sigma_res, TMath::Sqrt(6)*1.5*sigma_res);         
+  //eF1->SetParLimits(1, TMath::Sqrt(6)*0.1, TMath::Sqrt(6)*1.0);                                                                                                         
+         
    eF1->SetParameter(2, tmean);                       
    eF1->FixParameter(2, tmean);
-   eF1->SetParameter(3, X0);                     
+   eF1->SetParameter(3, X0);                              
    eF1->FixParameter(3, X0);                                                               
 
                            
@@ -1452,7 +1456,7 @@ if (refitFile && refitFile->IsOpen()) {
     refitFile->Close();
 } else {       
     std::cerr << "Errore apertura file per salvataggio refit.\n";
-}        */                                                                                              
+}               */                                                                                  
    
 
     }
@@ -1510,7 +1514,7 @@ else {
         }
 
         // SALVATAGGIO FILE
-        
+      
         /*TFile *refitFile = new TFile("MCSgraphs_crescente_refit.root", "UPDATE");
         if (refitFile && refitFile->IsOpen()) {
 
@@ -1532,7 +1536,7 @@ else {
             }
 
             refitFile->Close();
-        }    */  
+        }     */
 
         delete eG_clone_iniziale;
         delete eG_clone_post1;
@@ -1582,19 +1586,19 @@ if (outFile && outFile->IsOpen()) {
   eG->Draw("AP");
   gPad->Update();
   gPad->GetListOfPrimitives()->Write("stats", TObject::kOverwrite);   
-      
+          
   eG->Write();
   //eGX->Write();                   
-  //eGY->Write();               
+  //eGY->Write();                 
              
   outFile->Close();   */
   /*std::cout << "Grafici salvati su MCSgraphs.root" << std::endl;*/
 //} else {      
-  /*std::cerr << "Errore nell'apertura del file ROOT per il salvataggio." << std::endl;*/    
+  /*std::cerr << "Errore nell'apertura del file ROOT per il salvataggio." << std::endl;*/        
 //}                                            
                             
 
-return eP;                              
+return eP;                                    
 }             
 
 //________________________________________________________________________________________
