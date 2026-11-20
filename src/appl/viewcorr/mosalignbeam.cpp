@@ -31,8 +31,9 @@ bool AlignFragmentToBeam0(EdbPattern &p1, EdbPattern &p2, EdbLayer &l1, EdbLayer
 void TuneShrinkage(EdbPattern &p1, EdbPattern &p2, EdbLayer &l1, EdbLayer &l2, TEnv &env);
 TH2D *ProfileAndCleanTH3(TH3 *h3, double min_entries = 20);
 void AlignMicrotracksAngles(EdbPattern &p, TEnv &env);
-bool FindBeamWindowTX(EdbPattern &p,TEnv &env,float &txMin,float &txCenter,float &txMax);
-EdbPattern *ExtractBeamWindow(EdbPattern &p,float txMin,float txMax);
+bool FindBeamPeakTY(EdbPattern &p,TEnv &env,float &tyPeak);
+bool FindBeamWindowTX(EdbPattern &p,TEnv &env,float tyPeak,float &txMin,float &txCenter,float &txMax);
+EdbPattern *ExtractBeamWindow(EdbPattern &p,float txMin,float txMax,float tyPeak,float tyHalfWindow);
 
 void print_help_message()
 {
@@ -76,6 +77,11 @@ void set_default_link(TEnv &cenv)
   cenv.SetValue("fedra.mosalignbeam.TwoPeakSpectrumSigma", 5.0);
   cenv.SetValue("fedra.mosalignbeam.TwoPeakSpectrumThreshold", 0.05);
   cenv.SetValue("fedra.mosalignbeam.TwoPeakMaxOtherBeamFraction", 0.20);
+  cenv.SetValue("fedra.mosalignbeam.BeamTYHalfWindow", 0.02);
+  cenv.SetValue("fedra.mosalignbeam.BeamTYMin", -0.08);
+  cenv.SetValue("fedra.mosalignbeam.BeamTYMax", 0.08);
+  cenv.SetValue("fedra.mosalignbeam.BeamTYBins", 320);
+  cenv.SetValue("fedra.mosalignbeam.BeamTYFitHalfWidth", 0.015);
 
   cenv.SetValue("fedra.link.AFID", 1); // 1 is usually fine for scanned data; for the db-read data use 0!
   cenv.SetValue("fedra.link.DoImageCorr", 0);
@@ -300,12 +306,33 @@ void AlignToBeam(EdbID id, TEnv &cenv)
         // Select only the microtracks belonging to the beam of interest.   
         float txMin1, txPeak1, txMax1;
         float txMin2, txPeak2, txMax2;
+        float tyPeak1=0., tyPeak2=0.;
+        float tyHalfWindow=cenv.GetValue("fedra.mosalignbeam.BeamTYHalfWindow",0.02);
+        
+        bool okTY1=FindBeamPeakTY(*p1,cenv,tyPeak1);
+        bool okTY2=FindBeamPeakTY(*p2,cenv,tyPeak2);
 
-        FindBeamWindowTX(*p1,cenv,txMin1,txPeak1,txMax1);
-        FindBeamWindowTX(*p2,cenv,txMin2,txPeak2,txMax2);
+        if(!okTY1 || !okTY2)
+        {
+        Log(1,"mosalignbeam::AlignFragmentToBeam","fragment %d: TY peak search failed: side1=%d side2=%d",p1->ID(),okTY1,okTY2);
+        SafeDelete(p1);
+        SafeDelete(p2);
+        continue;
+        }
 
-        pp1 = ExtractBeamWindow(*p1,txMin1,txMax1);
-        pp2 = ExtractBeamWindow(*p2,txMin2,txMax2);
+        bool ok1=FindBeamWindowTX(*p1,cenv,tyPeak1,txMin1,txPeak1,txMax1);
+        bool ok2=FindBeamWindowTX(*p2,cenv,tyPeak2,txMin2,txPeak2,txMax2);
+
+        if(!ok1 || !ok2)
+        {
+        Log(1,"mosalignbeam::AlignFragmentToBeam","fragment %d: beam-window search failed: side1=%d side2=%d",p1->ID(),ok1,ok2);
+        SafeDelete(p1);
+        SafeDelete(p2);
+        continue;
+        }
+
+       pp1=ExtractBeamWindow(*p1,txMin1,txMax1,tyPeak1,tyHalfWindow);
+       pp2=ExtractBeamWindow(*p2,txMin2,txMax2,tyPeak2,tyHalfWindow);
 
         Log(1,"mosalignbeam::AlignFragmentToBeam","fragment %d: TX windows side1=[%.4f %.4f %.4f] side2=[%.4f %.4f %.4f], selected %d & %d microtracks out of %d & %d",p1->ID(),txMin1,txPeak1,txMax1,txMin2,txPeak2,txMax2,pp1->N(),pp2->N(),p1->N(),p2->N());
 
@@ -692,9 +719,117 @@ double GaussianIntegral(double amplitude, double mean, double sigma, double xmin
 }
 
 
-// Function to find the beam TX peak and the corresponding selection window
-bool FindBeamWindowTX(EdbPattern &p,TEnv &env,float &txMin,float &txCenter,float &txMax)
+// Find the local TY beam peak for one fragment and one side.
+// Find the local TY beam peak for one fragment and one side.
+bool FindBeamPeakTY(EdbPattern &p,TEnv &env,float &tyPeak)
 {
+    float tyMin=env.GetValue("fedra.mosalignbeam.BeamTYMin",-0.08);
+    float tyMax=env.GetValue("fedra.mosalignbeam.BeamTYMax",0.08);
+    int nBins=env.GetValue("fedra.mosalignbeam.BeamTYBins",320);
+    float fitHalfWidth=env.GetValue("fedra.mosalignbeam.BeamTYFitHalfWidth",0.015);
+    float tyHalfWindow=env.GetValue("fedra.mosalignbeam.BeamTYHalfWindow",0.02);
+
+    TH1F hBeamTY(Form("hBeamTY_%d_%d",p.Side(),p.ID()),"",nBins,tyMin,tyMax);
+    hBeamTY.SetDirectory(nullptr);
+
+    for(int i=0;i<p.N();i++) hBeamTY.Fill(p.GetSegment(i)->TY());
+
+    if(hBeamTY.GetEntries()<10)
+    {
+        Log(1,"FindBeamPeakTY","fragment %d side %d: too few microtracks",p.ID(),p.Side());
+        tyPeak=0.;
+        return false;
+    }
+
+    double tySeed=hBeamTY.GetBinCenter(hBeamTY.GetMaximumBin());
+
+    double fitMin=std::max((double)tyMin,tySeed-fitHalfWidth);
+    double fitMax=std::min((double)tyMax,tySeed+fitHalfWidth);
+
+    TF1 fTY(Form("fBeamTY_%d_%d",p.Side(),p.ID()),"gaus",fitMin,fitMax);
+    fTY.SetParameters(hBeamTY.GetMaximum(),tySeed,0.01);
+
+    TFitResultPtr fitResult=hBeamTY.Fit(&fTY,"RQ0");
+    int fitStatus=(int)fitResult;
+
+    bool fitOK=(fitStatus==0 && std::isfinite(fTY.GetParameter(1)) && std::isfinite(fTY.GetParameter(2)) && std::abs(fTY.GetParameter(2))>0.);
+
+    if(fitOK)
+    {
+        tyPeak=fTY.GetParameter(1);
+        Log(1,"FindBeamPeakTY","fragment %d side %d: seed=%.5f fitted TY peak=%.5f sigma=%.5f",p.ID(),p.Side(),tySeed,tyPeak,std::abs(fTY.GetParameter(2)));
+    }
+    else
+    {
+        tyPeak=tySeed;
+        Log(1,"FindBeamPeakTY","fragment %d side %d: fit failed, using histogram maximum TY=%.5f",p.ID(),p.Side(),tyPeak);
+    }
+
+    // Temporary diagnostic plot
+    gSystem->mkdir("beampeak_diagnostics",kTRUE);
+
+    TCanvas *cTY=new TCanvas(Form("cBeamTY_%d_%d",p.Side(),p.ID()),Form("Beam TY - side %d fragment %d",p.Side(),p.ID()),1000,700);
+
+    hBeamTY.SetTitle(Form("TY distribution - p%03d, side %d, fragment %d;TY;Microtracks",p.ScanID().ePlate,p.Side(),p.ID()));
+    hBeamTY.SetStats(0);
+    hBeamTY.SetLineWidth(2);
+    hBeamTY.Draw("HIST");
+
+    if(fitOK)
+    {
+        fTY.SetLineColor(kGreen+2);
+        fTY.SetLineWidth(2);
+        fTY.Draw("SAME");
+    }
+
+    double ymax=1.10*hBeamTY.GetMaximum();
+
+    TLine *lineSeed=new TLine(tySeed,0.,tySeed,ymax);
+    lineSeed->SetLineColor(kBlue);
+    lineSeed->SetLineStyle(2);
+    lineSeed->SetLineWidth(2);
+    lineSeed->Draw("SAME");
+
+    TLine *linePeak=new TLine(tyPeak,0.,tyPeak,ymax);
+    linePeak->SetLineColor(kRed);
+    linePeak->SetLineWidth(2);
+    linePeak->Draw("SAME");
+
+    TLine *lineMin=new TLine(tyPeak-tyHalfWindow,0.,tyPeak-tyHalfWindow,ymax);
+    TLine *lineMax=new TLine(tyPeak+tyHalfWindow,0.,tyPeak+tyHalfWindow,ymax);
+    lineMin->SetLineColor(kRed);
+    lineMax->SetLineColor(kRed);
+    lineMin->SetLineStyle(3);
+    lineMax->SetLineStyle(3);
+    lineMin->SetLineWidth(2);
+    lineMax->SetLineWidth(2);
+    lineMin->Draw("SAME");
+    lineMax->Draw("SAME");
+
+    TLegend *legend=new TLegend(0.60,0.67,0.88,0.88);
+    legend->SetBorderSize(0);
+    legend->SetFillStyle(0);
+    legend->AddEntry(&hBeamTY,"Original TY","l");
+    if(fitOK) legend->AddEntry(&fTY,"Local Gaussian fit","l");
+    legend->AddEntry(lineSeed,"Histogram maximum","l");
+    legend->AddEntry(linePeak,"TY beam peak","l");
+    legend->AddEntry(lineMin,"TY selection window","l");
+    legend->Draw();
+
+    TString plotName;
+    plotName.Form("beampeak_diagnostics/TY_p%03d_frag%03d_side%d.png",p.ScanID().ePlate,p.ID(),p.Side());
+    cTY->SaveAs(plotName.Data());
+
+    delete cTY;
+
+    return true;
+}
+
+
+// Function to find the beam TX peak and the corresponding selection window
+bool FindBeamWindowTX(EdbPattern &p,TEnv &env,float tyPeak,float &txMin,float &txCenter,float &txMax)
+{
+    float tyHalfWindow=env.GetValue("fedra.mosalignbeam.BeamTYHalfWindow",0.02);
     float txMinSearch = env.GetValue("fedra.mosalignbeam.BeamPeakMinTX",-0.04);  //Lower TX limit of the peak-search region
     float txMaxSearch = env.GetValue("fedra.mosalignbeam.BeamPeakMaxTX",0.08);   //Upper TX limit of the peak-search region
     int nBins = env.GetValue("fedra.mosalignbeam.BeamPeakBins",240);             //Number of bins used for the TX peak search
@@ -713,6 +848,9 @@ bool FindBeamWindowTX(EdbPattern &p,TEnv &env,float &txMin,float &txCenter,float
     double twoPeakSpectrumSigma = env.GetValue("fedra.mosalignbeam.TwoPeakSpectrumSigma", 5.0);
     double twoPeakSpectrumThreshold = env.GetValue("fedra.mosalignbeam.TwoPeakSpectrumThreshold", 0.05);
     double twoPeakMaxOtherBeamFraction = env.GetValue("fedra.mosalignbeam.TwoPeakMaxOtherBeamFraction", 0.20);
+    
+    if (twoPeakMode == 2)
+        twoPeakMode = (p.Side() == 1);
     
 
 // Optional two-peak mode for the two high-TX populations.
@@ -751,11 +889,10 @@ if (twoPeakMode)
     {
 	EdbSegP *s = p.GetSegment(i);
 
-	if (std::abs(s->TY()) > 0.1)
-	    continue;
+	if (std::abs(s->TY() - tyPeak) > tyHalfWindow) continue;                     
 
 	hTwoPeakTX.Fill(s->TX());
-    }
+    }  
 
     // Smoothing only for TSpectrum.
     TH1F hTwoPeakTXSmooth(hTwoPeakTX);
@@ -764,7 +901,7 @@ if (twoPeakMode)
 	Form("hTwoPeakTXSmooth_%d_%d", p.Side(), p.ID()));
 
     hTwoPeakTXSmooth.SetDirectory(nullptr);
-    hTwoPeakTXSmooth.Smooth(3);
+    hTwoPeakTXSmooth.Smooth(1);
 
     TSpectrum spectrumTwo(4);
 
@@ -941,7 +1078,7 @@ if (twoPeakMode)
 
 	if (!std::isfinite(twoAmplitude[ipeak]) ||
 	    twoAmplitude[ipeak] <= 0. ||
-	    !std::isfinite(twoMean[ipeak]) ||
+	    !std::isfinite(twoMean[ipeak]) ||   
 	    !std::isfinite(twoSigma[ipeak]) ||
 	    twoSigma[ipeak] <= 0.)
 	{
@@ -1206,8 +1343,7 @@ if (twoPeakMode)
 
     for(int i=0;i<p.N();i++)
     {
-    	if (std::abs(p.GetSegment(i)->TY())>0.04)   
-    	    continue;
+    	if(std::abs(p.GetSegment(i)->TY()-tyPeak)>tyHalfWindow) continue;
         hBeamTX.Fill(p.GetSegment(i)->TX());
     }
 
@@ -2101,10 +2237,10 @@ legend->Draw();
 }              
    
 
-EdbPattern *ExtractBeamWindow(EdbPattern &p,float txMin,float txMax)
+EdbPattern *ExtractBeamWindow(EdbPattern &p,float txMin,float txMax,float tyPeak,float tyHalfWindow)
 {
-    float min[5]={-1.e10,-1.e10,txMin,-0.04,-1.e10};   //X, Y, TX, TY, W                 
-    float max[5]={ 1.e10, 1.e10,txMax, 0.04, 1.e10};
+    float min[5]={-1.e10,-1.e10,txMin,tyPeak-tyHalfWindow,-1.e10};
+    float max[5]={ 1.e10, 1.e10,txMax,tyPeak+tyHalfWindow, 1.e10};
 
     return p.ExtractSubPattern(min,max);
 }
