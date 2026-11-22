@@ -249,6 +249,7 @@ void AlignToBeam(EdbID id, TEnv &cenv)
   int do_correct_shrinkage = cenv.GetValue("fedra.mosalignbeam.DoTuneShrinkage", 1);
   int do_full_linking = cenv.GetValue("fedra.mosalignbeam.DoFullLinking", 0);
   int twoPeakMode = cenv.GetValue("fedra.mosalignbeam.TwoPeakMode", 0);
+  int singlePeakMode = cenv.GetValue("fedra.mosalignbeam.SinglePeakMode", 0);
   mio.AddSegmentCut(1, cenv.GetValue("fedra.mosalignbeam.read.ICUT", "-1     0. 120000.   0.   120000.    -1.   1.      -1.   1.       0.  500."));
 
   EdbLayer *mapside1 = mio.GetCorrMap(id.ePlate, 1);
@@ -343,7 +344,7 @@ void AlignToBeam(EdbID id, TEnv &cenv)
         }
         if (do_align_beam)
         { 
-          if (twoPeakMode){
+          if (twoPeakMode || singlePeakMode){
               AlignFragmentToBeam0(*pp2, *pp1, *l2, *l1, 100);   
           }   
           AlignFragmentToBeam0(*pp2, *pp1, *l2, *l1, 30);     // align 2 to 1 using parallel beam tracks
@@ -848,9 +849,166 @@ bool FindBeamWindowTX(EdbPattern &p,TEnv &env,float tyPeak,float &txMin,float &t
     double twoPeakSpectrumSigma = env.GetValue("fedra.mosalignbeam.TwoPeakSpectrumSigma", 5.0);
     double twoPeakSpectrumThreshold = env.GetValue("fedra.mosalignbeam.TwoPeakSpectrumThreshold", 0.05);
     double twoPeakMaxOtherBeamFraction = env.GetValue("fedra.mosalignbeam.TwoPeakMaxOtherBeamFraction", 0.20);
+    int singlePeakMode = env.GetValue("fedra.mosalignbeam.SinglePeakMode", 0);
+    double singlePeakMinTX = env.GetValue("fedra.mosalignbeam.SinglePeakMinTX", -0.24);
+    double singlePeakMaxTX = env.GetValue("fedra.mosalignbeam.SinglePeakMaxTX", -0.06);
+    int singlePeakBins = env.GetValue("fedra.mosalignbeam.SinglePeakBins", 360);
+    double singlePeakSpectrumSigma = env.GetValue("fedra.mosalignbeam.SinglePeakSpectrumSigma", 5.0);
+    double singlePeakSpectrumThreshold = env.GetValue("fedra.mosalignbeam.SinglePeakSpectrumThreshold", 0.05);
     
     if (twoPeakMode == 2)
         twoPeakMode = (p.Side() == 1);
+        
+        
+    // Optional single-peak mode.
+    if (singlePeakMode)
+    {
+        if (twoPeakMode)
+        {
+            Log(1, "FindBeamWindowTX", "fragment %d side %d: SinglePeakMode and TwoPeakMode cannot be enabled simultaneously", p.ID(), p.Side());
+            return false;
+        }
+
+        if (singlePeakBins < 10 || singlePeakMinTX >= singlePeakMaxTX || singlePeakSpectrumSigma <= 0. || singlePeakSpectrumThreshold <= 0. || singlePeakSpectrumThreshold >= 1.)
+        {
+            Log(1, "FindBeamWindowTX", "fragment %d side %d: invalid SinglePeakMode configuration", p.ID(), p.Side());
+            return false;
+        }
+
+        // Build TX histogram with the same TY selection used in the standard mode.
+        TH1F hSingleTX(Form("hSingleTX_%d_%d", p.Side(), p.ID()), "", singlePeakBins, singlePeakMinTX, singlePeakMaxTX);
+        hSingleTX.SetDirectory(nullptr);
+
+        for (int i = 0; i < p.N(); ++i)
+        {
+             EdbSegP *s = p.GetSegment(i);
+
+             if (std::abs(s->TY() - tyPeak) > tyHalfWindow) continue;
+
+             hSingleTX.Fill(s->TX());
+        }
+
+        if (hSingleTX.GetEntries() < 20)
+        {
+            Log(1, "FindBeamWindowTX", "fragment %d side %d: insufficient entries for SinglePeakMode: %.0f", p.ID(), p.Side(), hSingleTX.GetEntries());
+            return false;
+        }
+
+        // Smooth only for TSpectrum peak identification.
+        TH1F hSingleTXSmooth(hSingleTX);
+
+        hSingleTXSmooth.SetName(Form("hSingleTXSmooth_%d_%d", p.Side(), p.ID()));
+
+        hSingleTXSmooth.SetDirectory(nullptr);
+        hSingleTXSmooth.Smooth(1);
+
+        TSpectrum spectrumSingle(10);
+
+        int nPeaksSingle = spectrumSingle.Search(&hSingleTXSmooth, singlePeakSpectrumSigma, "goff", singlePeakSpectrumThreshold);
+
+        std::vector<double> singlePeakPositions;
+
+        double *xPeaksSingle = spectrumSingle.GetPositionX();
+
+        for (int i = 0; i < nPeaksSingle; ++i)
+        {
+            double x = xPeaksSingle[i];
+            if (x >= singlePeakMinTX && x <= singlePeakMaxTX) singlePeakPositions.push_back(x);
+        }
+
+        Log(1, "FindBeamWindowTX", "fragment %d side %d: SinglePeakMode found %zu peaks in TX range [%.4f, %.4f]", p.ID(), p.Side(), singlePeakPositions.size(), singlePeakMinTX, singlePeakMaxTX);
+
+        if (singlePeakPositions.size() != 1)
+        {
+            Log(1, "FindBeamWindowTX", "fragment %d side %d: expected exactly one TX peak", p.ID(), p.Side());
+            return false;
+        }
+
+        double peakPosition = singlePeakPositions[0];
+
+        double binWidth = hSingleTX.GetBinWidth(1);
+        double rangeWidth = singlePeakMaxTX - singlePeakMinTX;
+        double sigmaInitial = std::max(2.0 * binWidth, 0.03 * rangeWidth);
+        double sigmaMaximum = 0.25 * rangeWidth;
+        double backgroundInitial = std::max(0.0, (double)hSingleTX.GetMinimum());
+        double amplitudeInitial = std::max(1.0, hSingleTX.GetBinContent(hSingleTX.FindBin(peakPosition)) - backgroundInitial);
+
+        // Gaussian plus linear background
+        TF1 fSingle(Form("fSingle_%d_%d", p.Side(), p.ID()), "gaus(0)+pol1(3)", singlePeakMinTX, singlePeakMaxTX);
+        fSingle.SetParameters(amplitudeInitial, peakPosition, sigmaInitial, backgroundInitial, 0.);
+        fSingle.SetParLimits(0, 0.0, 10.0 * hSingleTX.GetMaximum());
+        fSingle.SetParLimits(1, singlePeakMinTX, singlePeakMaxTX);
+        fSingle.SetParLimits(2, 0.5 * binWidth, sigmaMaximum);
+        TFitResultPtr fitResultSingle = hSingleTX.Fit(&fSingle, "RQS0");
+
+        int fitStatusSingle = (int)fitResultSingle;
+
+        if (fitStatusSingle != 0)
+        {
+            Log(1, "FindBeamWindowTX", "fragment %d side %d: SinglePeakMode fit failed, status=%d", p.ID(), p.Side(), fitStatusSingle);
+            return false;
+        }
+
+        double fittedMean = fSingle.GetParameter(1);
+        double fittedSigma = std::abs(fSingle.GetParameter(2));
+
+        if (!std::isfinite(fittedMean) || !std::isfinite(fittedSigma) || fittedSigma <= 0.)
+        {
+            Log(1, "FindBeamWindowTX", "fragment %d side %d: invalid Gaussian parameters", p.ID(), p.Side());
+            return false;
+        }
+
+        txCenter = fittedMean;
+        txMin = std::max(singlePeakMinTX, fittedMean - 4.0 * fittedSigma);
+        txMax = std::min(singlePeakMaxTX, fittedMean + 4.0 * fittedSigma);
+        if (txMin >= txMax)return false;
+
+        Log(1, "FindBeamWindowTX", "fragment %d side %d: SinglePeakMode TYpeak=%.5f TXpeak=%.5f sigma=%.5f TXwindow=[%.5f, %.5f]", p.ID(), p.Side(), tyPeak, txCenter, fittedSigma, txMin, txMax);
+
+        // Diagnostic plot
+        TCanvas *cSingle = new TCanvas(Form("cSingle_%d_%d", p.Side(), p.ID()), "Single TX peak", 900, 650);
+        hSingleTX.SetTitle(Form("Single-peak TX selection;TX [rad];Microtracks / bin"));
+        hSingleTX.SetStats(0);
+        hSingleTX.SetLineColor(kBlack);
+        hSingleTX.SetLineWidth(2);
+        hSingleTX.Draw("HIST");
+
+        fSingle.SetLineColor(kRed);
+        fSingle.SetLineWidth(2);
+        fSingle.Draw("SAME");
+
+        TLine lineMin(txMin, 0., txMin, hSingleTX.GetMaximum() * 1.1);
+        TLine lineMax(txMax, 0., txMax, hSingleTX.GetMaximum() * 1.1);
+        
+        hSingleTX.SetMaximum(hSingleTX.GetMaximum() * 1.2);
+
+        lineMin.SetLineColor(kBlue);
+        lineMax.SetLineColor(kBlue);
+        lineMin.SetLineStyle(2);
+        lineMax.SetLineStyle(2);
+        lineMin.SetLineWidth(2);
+        lineMax.SetLineWidth(2);
+        lineMin.Draw("SAME");
+        lineMax.Draw("SAME");
+        
+        // Display Gaussian fit parameters
+        TPaveText *fitBoxSingle = new TPaveText(0.66, 0.73, 0.91, 0.88, "NDC");
+        fitBoxSingle->SetBorderSize(1);
+        fitBoxSingle->SetFillStyle(1001);
+        fitBoxSingle->SetTextAlign(12);
+        fitBoxSingle->SetTextSize(0.030);
+        fitBoxSingle->AddText(Form("Mean = %.5f rad", fittedMean));
+        fitBoxSingle->AddText(Form("Sigma = %.5f rad", fittedSigma));
+        fitBoxSingle->Draw("SAME");
+
+        gSystem->mkdir("beampeak_diagnostics", true);
+
+        TString plotNameSingle;
+        plotNameSingle.Form("beampeak_diagnostics/p%03d_frag%03d_side%d_singlepeak.png", p.ScanID().ePlate, p.ID(), p.Side());
+        cSingle->SaveAs(plotNameSingle.Data());
+        delete cSingle;
+        return true;
+    }
     
 
 // Optional two-peak mode for the two high-TX populations.
@@ -2214,7 +2372,7 @@ legend->SetTextSize(0.025);
 legend->AddEntry(&hBeamTX, "Original TX", "l");
 legend->AddEntry(&fAll, "Total fit", "l");
 legend->AddEntry(beamFunctions[selectedGaussian], "Selected beam Gaussian", "l");
-
+               
 // Pick one non-selected Gaussian as visual example
 // for all the gray Gaussian components.
 int otherGaussian = (selectedGaussian == 0) ? 1 : 0;
